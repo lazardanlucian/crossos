@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
+#include <stdlib.h>
 
 /* Simple test harness */
 static int s_passed = 0;
@@ -57,6 +58,34 @@ TEST(test_result_codes)
     CHECK(CROSSOS_ERR_OOM       <  0);
     CHECK(CROSSOS_ERR_UNSUPPORT <  0);
     CHECK(CROSSOS_ERR_PARAM     <  0);
+    CHECK(CROSSOS_ERR_IO        <  0);
+    CHECK(CROSSOS_ERR_NETWORK   <  0);
+    CHECK(CROSSOS_ERR_AUDIO     <  0);
+}
+
+TEST(test_file_roundtrip)
+{
+    const char *path = "crossos_test_io.tmp";
+    const char *payload = "crossos-file-api";
+
+    crossos_file_t *file = NULL;
+    CHECK(crossos_file_open(path,
+                            CROSSOS_FILE_WRITE | CROSSOS_FILE_TRUNC | CROSSOS_FILE_BINARY,
+                            &file) == CROSSOS_OK);
+
+    size_t written = 0;
+    CHECK(crossos_file_write(file, payload, strlen(payload), &written) == CROSSOS_OK);
+    CHECK(written == strlen(payload));
+    crossos_file_close(file);
+
+    void *bytes = NULL;
+    size_t size = 0;
+    CHECK(crossos_file_read_all(path, &bytes, &size) == CROSSOS_OK);
+    CHECK(size == strlen(payload));
+    CHECK(memcmp(bytes, payload, strlen(payload)) == 0);
+    crossos_file_free(bytes);
+
+    remove(path);
 }
 
 TEST(test_touch_point_limit)
@@ -169,6 +198,7 @@ int main(void)
     RUN(test_modifier_bitmask);
     RUN(test_pixel_format_enum);
     RUN(test_version_string);
+    RUN(test_file_roundtrip);
     RUN(test_null_window_safety);
     RUN(test_null_surface_safety);
 

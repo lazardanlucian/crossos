@@ -18,6 +18,9 @@ option(CROSSOS_BUILD_TESTS    "Build the test suite"       ON)
 # ── Source files ─────────────────────────────────────────────────────────
 set(CROSSOS_SOURCES
     src/core/init.c
+    src/core/file.c
+    src/core/web.c
+    src/core/audio.c
 )
 
 if(WIN32)
@@ -49,6 +52,7 @@ target_include_directories(crossos
 # ── Platform-specific dependencies ───────────────────────────────────────
 if(WIN32)
     target_link_libraries(crossos PUBLIC user32 gdi32)
+    target_link_libraries(crossos PUBLIC winmm)
 
 elseif(ANDROID)
     find_library(ANDROID_LIB      android)
@@ -84,6 +88,15 @@ elseif(UNIX)
     if(X11_Xrandr_FOUND)
         target_link_libraries(crossos PUBLIC ${X11_Xrandr_LIB})
     endif()
+endif()
+
+# Optional HTTP backend
+find_package(CURL QUIET)
+if(CURL_FOUND)
+    target_link_libraries(crossos PUBLIC CURL::libcurl)
+    target_compile_definitions(crossos PRIVATE CROSSOS_HAS_CURL=1)
+else()
+    message(WARNING "libcurl not found. crossos/web.h APIs will return CROSSOS_ERR_UNSUPPORT.")
 endif()
 
 # ── Compiler warnings ────────────────────────────────────────────────────

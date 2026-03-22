@@ -2,6 +2,8 @@
 
 A cross-platform **display driver / input SDK** written in C that lets you write a single application and produce separate builds for **Windows**, **Linux**, and **Android** – with no porting required.
 
+CrossOS now also includes utility modules for file I/O, HTTP API calls, and basic audio playback.
+
 ## Features
 
 | Feature | Windows | Linux | Android |
@@ -15,6 +17,9 @@ A cross-platform **display driver / input SDK** written in C that lets you write
 | Full-screen mode | ✔ | ✔ (_NET_WM_STATE) | always full-screen |
 | Multi-monitor query | ✔ (SM_CMONITORS) | ✔ (ScreenCount) | N/A |
 | Native handle escape | `HWND` | `Window` (XID) | `ANativeWindow*` |
+| File I/O helpers | ✔ | ✔ | ✔ |
+| HTTP API requests | ✔ (libcurl) | ✔ (libcurl) | ✔ (libcurl, if linked) |
+| Audio playback | ✔ (PlaySound) | ✔ (`aplay`/`paplay`) | planned |
 
 ---
 
@@ -27,10 +32,16 @@ crossos/
 │   ├── types.h             Shared types, enums, event structs
 │   ├── window.h            Window management
 │   ├── input.h             Event polling, key codes, touch queries
-│   └── display.h           Software framebuffer + display info
+│   ├── display.h           Software framebuffer + display info
+│   ├── file.h              File I/O helpers
+│   ├── web.h               HTTP request helpers
+│   └── audio.h             Basic audio playback
 │
 ├── src/
 │   ├── core/init.c         Platform-agnostic lifecycle
+│   ├── core/file.c         File I/O implementation
+│   ├── core/web.c          HTTP (libcurl) implementation
+│   ├── core/audio.c        Audio helpers implementation
 │   └── platform/
 │       ├── windows/        Win32 backend
 │       ├── linux/          X11 / XInput2 backend

@@ -33,6 +33,9 @@
 #include "window.h"
 #include "input.h"
 #include "display.h"
+#include "file.h"
+#include "web.h"
+#include "audio.h"
 
 #ifdef __cplusplus
 extern "C" {

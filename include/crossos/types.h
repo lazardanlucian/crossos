@@ -26,6 +26,9 @@ typedef enum crossos_result {
     CROSSOS_ERR_OOM       = -4, /**< Out of memory                         */
     CROSSOS_ERR_UNSUPPORT = -5, /**< Feature not supported on this platform*/
     CROSSOS_ERR_PARAM     = -6, /**< Invalid parameter                     */
+    CROSSOS_ERR_IO        = -7, /**< File system error                     */
+    CROSSOS_ERR_NETWORK   = -8, /**< Network / HTTP request error          */
+    CROSSOS_ERR_AUDIO     = -9, /**< Audio subsystem error                 */
 } crossos_result_t;
 
 /* ── Opaque handle types ──────────────────────────────────────────────── */

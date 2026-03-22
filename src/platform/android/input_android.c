@@ -13,6 +13,7 @@
 
 #include <android/input.h>
 #include <android/log.h>
+#include <android/native_window.h>
 #include <android_native_app_glue.h>
 
 #include <string.h>
@@ -24,6 +25,8 @@
 /* s_app is declared extern in android_internal.h */
 extern volatile int         crossos__quit_requested;
 extern void                 crossos__set_error(const char *fmt, ...);
+extern void                 crossos_android_on_window_init(ANativeWindow *new_win);
+extern void                 crossos_android_on_window_term(void);
 
 /* ── Event queue ──────────────────────────────────────────────────────── */
 
@@ -90,6 +93,30 @@ static void process_input_event(AInputEvent *aev)
 
     (void)action_idx; /* used to identify which pointer triggered the event */
     crossos__push_event(&ev);
+
+    /* Also emit a compatible pointer event for the primary touch point so
+     * that pointer-based UI handlers (which listen for POINTER_DOWN/UP/MOVE)
+     * respond correctly to touch input. */
+    {
+        crossos_event_t pev;
+        int emit = 1;
+        memset(&pev, 0, sizeof(pev));
+        switch (masked) {
+        case AMOTION_EVENT_ACTION_DOWN:
+            pev.type = CROSSOS_EVENT_POINTER_DOWN;  break;
+        case AMOTION_EVENT_ACTION_UP:
+            pev.type = CROSSOS_EVENT_POINTER_UP;    break;
+        case AMOTION_EVENT_ACTION_MOVE:
+            pev.type = CROSSOS_EVENT_POINTER_MOVE;  break;
+        default:
+            emit = 0;                               break;
+        }
+        if (emit) {
+            pev.pointer.x = AMotionEvent_getX(aev, 0);
+            pev.pointer.y = AMotionEvent_getY(aev, 0);
+            crossos__push_event(&pev);
+        }
+    }
 }
 
 /* ── android_app command / input callbacks ───────────────────────────── */
@@ -100,8 +127,22 @@ static void handle_cmd(struct android_app *app, int32_t cmd)
     memset(&ev, 0, sizeof(ev));
 
     switch (cmd) {
-    case APP_CMD_DESTROY:
+    case APP_CMD_INIT_WINDOW:
+        /* Surface created or recreated (e.g. app resumed from background). */
+        if (app->window) {
+            crossos_android_on_window_init(app->window);
+            ev.type          = CROSSOS_EVENT_WINDOW_RESIZE;
+            ev.resize.width  = ANativeWindow_getWidth(app->window);
+            ev.resize.height = ANativeWindow_getHeight(app->window);
+            crossos__push_event(&ev);
+        }
+        break;
     case APP_CMD_TERM_WINDOW:
+        /* Surface destroyed (app backgrounded). Release the surface but do
+         * NOT treat this as application close – the app will resume later. */
+        crossos_android_on_window_term();
+        break;
+    case APP_CMD_DESTROY:
         ev.type = CROSSOS_EVENT_WINDOW_CLOSE;
         crossos__push_event(&ev);
         break;

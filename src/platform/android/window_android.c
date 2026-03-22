@@ -46,6 +46,9 @@ void crossos_android_set_app(struct android_app *app)
     s_app = app;
 }
 
+/* Global reference to the active window, used for surface re-init on resume. */
+static crossos_window_t *s_window = NULL;
+
 /* ── Internal structures ──────────────────────────────────────────────── */
 
 struct crossos_window {
@@ -111,12 +114,14 @@ crossos_window_t *crossos_window_create(const char *title,
     win->surface = calloc(1, sizeof(*win->surface));
     if (win->surface) win->surface->win = win;
 
+    s_window = win;
     return win;
 }
 
 void crossos_window_destroy(crossos_window_t *win)
 {
     if (!win) return;
+    if (s_window == win) s_window = NULL;
     free(win->surface);
     if (win->native_win) ANativeWindow_release(win->native_win);
     free(win);
@@ -124,6 +129,35 @@ void crossos_window_destroy(crossos_window_t *win)
 
 void crossos_window_show(crossos_window_t *win)  { (void)win; /* no-op */ }
 void crossos_window_hide(crossos_window_t *win)  { (void)win; /* no-op */ }
+
+/* ── Surface lifecycle helpers (called by input_android.c on APP_CMD_*) ─ */
+
+/* Called when APP_CMD_INIT_WINDOW fires – acquires/re-acquires the surface. */
+void crossos_android_on_window_init(ANativeWindow *new_win)
+{
+    if (!s_window || !new_win) return;
+    if (s_window->native_win && s_window->native_win != new_win) {
+        ANativeWindow_release(s_window->native_win);
+    }
+    s_window->native_win = new_win;
+    ANativeWindow_acquire(s_window->native_win);
+    s_window->width  = ANativeWindow_getWidth(new_win);
+    s_window->height = ANativeWindow_getHeight(new_win);
+    ANativeWindow_setBuffersGeometry(s_window->native_win,
+                                     s_window->width, s_window->height,
+                                     WINDOW_FORMAT_RGBA_8888);
+}
+
+/* Called when APP_CMD_TERM_WINDOW fires – releases the surface so render
+ * calls skip gracefully while the app is in the background. */
+void crossos_android_on_window_term(void)
+{
+    if (!s_window) return;
+    if (s_window->native_win) {
+        ANativeWindow_release(s_window->native_win);
+        s_window->native_win = NULL;
+    }
+}
 
 crossos_result_t crossos_window_set_fullscreen(crossos_window_t *win, int fs)
 {
@@ -187,6 +221,10 @@ crossos_result_t crossos_surface_lock(crossos_surface_t   *surf,
                                       crossos_framebuffer_t *fb)
 {
     if (!surf || !fb) return CROSSOS_ERR_PARAM;
+    if (!surf->win || !surf->win->native_win) {
+        /* Surface is temporarily unavailable (e.g. app backgrounded). */
+        return CROSSOS_ERR_DISPLAY;
+    }
     if (surf->locked)  return CROSSOS_ERR_DISPLAY;
 
     if (ANativeWindow_lock(surf->win->native_win, &surf->buffer, NULL) < 0) {
@@ -213,7 +251,7 @@ void crossos_surface_unlock(crossos_surface_t *surf)
 
 crossos_result_t crossos_surface_present(crossos_surface_t *surf)
 {
-    if (!surf || !surf->win) return CROSSOS_ERR_PARAM;
+    if (!surf || !surf->win || !surf->win->native_win) return CROSSOS_ERR_PARAM;
     ANativeWindow_unlockAndPost(surf->win->native_win);
     return CROSSOS_OK;
 }

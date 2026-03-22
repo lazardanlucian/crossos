@@ -24,6 +24,7 @@ static jmethodID s_mid_poll_burn = NULL;
 static jmethodID s_mid_cancel_burn = NULL;
 static jmethodID s_mid_free_burn = NULL;
 static jmethodID s_mid_get_last_error = NULL;
+static jmethodID s_mid_poll_device_changed = NULL;
 
 static JNIEnv *get_env(int *did_attach)
 {
@@ -489,6 +490,16 @@ crossos_result_t crossos_android_optical_backend_init(void)
                                                      "getLastError",
                                                      "()Ljava/lang/String;");
 
+    /* Optional – non-fatal if absent in older builds. */
+    s_mid_poll_device_changed = (*env)->GetStaticMethodID(env,
+                                                          s_burner_class,
+                                                          "pollDeviceListChanged",
+                                                          "()Z");
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        s_mid_poll_device_changed = NULL;
+    }
+
     if (!s_mid_init || !s_mid_list_devices || !s_mid_start_burn ||
         !s_mid_poll_burn || !s_mid_cancel_burn || !s_mid_free_burn ||
         !s_mid_get_last_error) {
@@ -528,12 +539,38 @@ crossos_result_t crossos_android_optical_backend_init(void)
     return CROSSOS_OK;
 }
 
+/**
+ * Returns non-zero if the USB device list has changed since the last call
+ * (device attached or detached).  Resets the flag on each call so callers
+ * can use it to decide whether to re-scan.
+ */
+int crossos_android_poll_usb_changed(void)
+{
+    if (!s_burner_class || !s_mid_poll_device_changed) return 0;
+
+    int did_attach = 0;
+    JNIEnv *env = get_env(&did_attach);
+    if (!env) return 0;
+
+    jboolean changed = (*env)->CallStaticBooleanMethod(env,
+                                                       s_burner_class,
+                                                       s_mid_poll_device_changed);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        changed = JNI_FALSE;
+    }
+
+    detach_env_if_needed(did_attach);
+    return (int)changed;
+}
+
 void crossos_android_optical_backend_shutdown(void)
 {
     int did_attach = 0;
     JNIEnv *env = get_env(&did_attach);
 
     crossos_optical_set_backend(NULL, NULL);
+    s_mid_poll_device_changed = NULL;
 
     if (env) {
         if (s_burner_class) {

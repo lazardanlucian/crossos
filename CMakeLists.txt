@@ -53,14 +53,9 @@ if(WIN32)
 elseif(ANDROID)
     find_library(ANDROID_LIB      android)
     find_library(LOG_LIB          log)
-    find_library(NATIVE_APP_GLUE  android_native_app_glue HINTS
-                 ${CMAKE_ANDROID_NDK}/sources/android/native_app_glue)
 
     target_include_directories(crossos PRIVATE
         ${CMAKE_ANDROID_NDK}/sources/android/native_app_glue
-    )
-    target_sources(crossos PRIVATE
-        ${CMAKE_ANDROID_NDK}/sources/android/native_app_glue/android_native_app_glue.c
     )
     target_link_libraries(crossos PUBLIC ${ANDROID_LIB} ${LOG_LIB})
 

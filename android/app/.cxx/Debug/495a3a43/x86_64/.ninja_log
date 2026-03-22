@@ -1,0 +1,10 @@
+# ninja log v5
+0	80	1774173852108674618	CMakeFiles/crossos_hello.dir/android_main.c.o	e05699641de0bfc0
+3	107	1774173852125674617	crossos-build/CMakeFiles/crossos.dir/src/core/init.c.o	44a11a1f79b3b343
+81	152	1774173852184674615	crossos-build/CMakeFiles/crossos.dir/src/platform/android/window_android.c.o	dc0682c368ee3443
+0	182	1774173852214674614	CMakeFiles/crossos_hello.dir/opt/android-sdk/ndk/26.3.11579264/sources/android/native_app_glue/android_native_app_glue.c.o	8c04d90bd1aea693
+107	194	1774173852228674614	crossos-build/CMakeFiles/crossos.dir/src/platform/android/input_android.c.o	39f4163ac4f17f15
+194	209	1774173852240674613	crossos-build/libcrossos.a	c4e2b4cacc045051
+209	234	1774173852267674612	/workspaces/crossos/android/app/build/intermediates/cxx/Debug/495a3a43/obj/x86_64/libcrossos_hello.so	8451dbae12f6fb6b
+1	67	1774173910520672650	CMakeFiles/crossos_hello.dir/android_main.c.o	e05699641de0bfc0
+71	103	1774173910560672649	/workspaces/crossos/android/app/build/intermediates/cxx/Debug/495a3a43/obj/x86_64/libcrossos_hello.so	8451dbae12f6fb6b

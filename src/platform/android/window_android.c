@@ -32,6 +32,8 @@
 extern void         crossos__set_error(const char *fmt, ...);
 extern volatile int crossos__quit_requested;
 extern void         crossos__push_event(const crossos_event_t *ev);
+extern crossos_result_t crossos_android_optical_backend_init(void);
+extern void crossos_android_optical_backend_shutdown(void);
 
 /* ── Module state ─────────────────────────────────────────────────────── */
 
@@ -67,12 +69,16 @@ crossos_result_t crossos__platform_init(void)
         crossos__set_error("Android: crossos_android_set_app() not called");
         return CROSSOS_ERR_INIT;
     }
+    if (crossos_android_optical_backend_init() != CROSSOS_OK) {
+        LOGI("CrossOS Android optical backend disabled: %s", crossos_get_error());
+    }
     LOGI("CrossOS Android platform init");
     return CROSSOS_OK;
 }
 
 void crossos__platform_shutdown(void)
 {
+    crossos_android_optical_backend_shutdown();
     LOGI("CrossOS Android platform shutdown");
 }
 

@@ -13,11 +13,13 @@ add_subdirectory(${CROSSOS_ROOT} ${CMAKE_BINARY_DIR}/crossos-build)
 
 add_library(crossos_hello SHARED
     android_main.c
+    ${CROSSOS_ROOT}/examples/disc_burner/iso_image.c
     ${CMAKE_ANDROID_NDK}/sources/android/native_app_glue/android_native_app_glue.c
 )
 
 target_include_directories(crossos_hello PRIVATE
     ${CMAKE_ANDROID_NDK}/sources/android/native_app_glue
+    ${CROSSOS_ROOT}/examples/disc_burner
 )
 
 target_link_libraries(crossos_hello PRIVATE

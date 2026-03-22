@@ -37,6 +37,7 @@ elseif(ANDROID)
     list(APPEND CROSSOS_SOURCES
         src/platform/android/window_android.c
         src/platform/android/input_android.c
+        src/platform/android/optical_android.c
     )
 elseif(UNIX)
     list(APPEND CROSSOS_SOURCES
@@ -62,11 +63,16 @@ if(WIN32)
 elseif(ANDROID)
     find_library(ANDROID_LIB      android)
     find_library(LOG_LIB          log)
+    find_library(AAUDIO_LIB       aaudio)
 
     target_include_directories(crossos PRIVATE
         ${CMAKE_ANDROID_NDK}/sources/android/native_app_glue
     )
-    target_link_libraries(crossos PUBLIC ${ANDROID_LIB} ${LOG_LIB})
+    if(AAUDIO_LIB)
+        target_link_libraries(crossos PUBLIC ${ANDROID_LIB} ${LOG_LIB} ${AAUDIO_LIB})
+    else()
+        target_link_libraries(crossos PUBLIC ${ANDROID_LIB} ${LOG_LIB})
+    endif()
 
 elseif(UNIX)
     find_package(X11 REQUIRED)

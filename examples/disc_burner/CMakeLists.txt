@@ -1,4 +1,7 @@
-add_executable(disc_burner main.c)
+add_executable(disc_burner
+    iso_image.c
+    main.c
+)
 
 target_link_libraries(disc_burner PRIVATE crossos)
 

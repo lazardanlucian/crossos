@@ -20,8 +20,9 @@ CrossOS now also includes utility modules for file I/O, HTTP API calls, basic au
 | File I/O helpers | ✔ | ✔ | ✔ |
 | HTTP API requests | ✔ (libcurl) | ✔ (libcurl) | ✔ (libcurl, if linked) |
 | Audio playback | ✔ (PlaySound) | ✔ (`aplay`/`paplay`) | tone playback |
-| Optical device scan | ✔ | ✔ | limited |
-| Optical burn progress API | simulated | simulated | simulated |
+| Optical device scan | ✔ | ✔ | USB host (OTG) |
+| Optical burn progress API | simulated | simulated | real USB backend + simulated fallback |
+| Optical backend plug-in API | ✔ | ✔ | ✔ |
 | SDK drawing primitives | ✔ | ✔ | ✔ |
 | SDK UI widgets (label/button/list/progress/dropdown/tree header) | ✔ | ✔ | ✔ |
 | Native file picker API | ✔ | planned | planned |
@@ -71,6 +72,21 @@ crossos/
 ```
 
 ---
+
+## Optical Burn Backends
+
+CrossOS now supports a pluggable optical backend via `crossos_optical_set_backend(...)`.
+
+- If a backend is registered and supports burning, `crossos_optical_burn_start(...)` uses it.
+- If no backend is available, it falls back to simulated burn flow.
+
+The Android app in this repository now registers a USB-host backend at startup.
+
+- It requests USB device permission when needed.
+- It detects USB mass-storage optical drives, probes media presence/capacity when possible, and starts a physical burn worker.
+- The disc burner example now auto-packages queued files/folders into a temporary ISO before starting the physical burn.
+- Current Android backend writes a single disc-image file (`.iso`, `.img`, `.bin`) to the selected USB optical drive.
+- If backend startup fails, CrossOS still falls back to simulated burn flow so UX can continue.
 
 ## Quick start
 

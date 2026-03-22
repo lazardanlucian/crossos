@@ -2,14 +2,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
 
     <application
-        android:label="CrossOS Self Test"
-        android:hasCode="false"
+        android:label="CrossOS Disc Burner"
+        android:hasCode="true"
         android:allowBackup="true"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
         <activity
-            android:name="android.app.NativeActivity"
+            android:name="io.crossos.hello.CrossOSNativeActivity"
             android:exported="true"
             android:launchMode="singleTask"
             android:configChanges="orientation|keyboardHidden|screenSize">

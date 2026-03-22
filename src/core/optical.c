@@ -26,7 +26,19 @@ struct crossos_optical_burn_job {
     int canceled;
     int failed;
     int done;
+    int use_backend;
+    void *backend_job;
 };
+
+static const crossos_optical_backend_t *s_backend = NULL;
+static void *s_backend_user_data = NULL;
+
+void crossos_optical_set_backend(const crossos_optical_backend_t *backend,
+                                 void *user_data)
+{
+    s_backend = backend;
+    s_backend_user_data = user_data;
+}
 
 static uint64_t crossos__now_ms(void)
 {
@@ -121,6 +133,20 @@ crossos_result_t crossos_optical_list_devices(crossos_optical_device_t *devices,
                                               size_t max_devices,
                                               size_t *out_count)
 {
+    if (s_backend && s_backend->list_devices) {
+        crossos_result_t rc = s_backend->list_devices(devices,
+                                                      max_devices,
+                                                      out_count,
+                                                      s_backend_user_data);
+        if (rc == CROSSOS_OK) {
+            return rc;
+        }
+        /* Backend can return UNSUPPORT to fall through to built-in fallback. */
+        if (rc != CROSSOS_ERR_UNSUPPORT) {
+            return rc;
+        }
+    }
+
     if (!out_count) {
         crossos__set_error("optical_list_devices: invalid parameter");
         return CROSSOS_ERR_PARAM;
@@ -231,12 +257,63 @@ crossos_result_t crossos_optical_burn_start_simulated(const char *const *paths,
     return CROSSOS_OK;
 }
 
+crossos_result_t crossos_optical_burn_start(const char *const *paths,
+                                            size_t path_count,
+                                            const char *target_device_id,
+                                            crossos_optical_burn_job_t **out_job)
+{
+    if (!out_job) {
+        crossos__set_error("optical_burn_start: invalid parameter");
+        return CROSSOS_ERR_PARAM;
+    }
+
+    *out_job = NULL;
+
+    if (s_backend && s_backend->burn_start) {
+        crossos_optical_burn_job_t *job = (crossos_optical_burn_job_t *)calloc(1, sizeof(*job));
+        if (!job) {
+            crossos__set_error("optical_burn_start: out of memory");
+            return CROSSOS_ERR_OOM;
+        }
+
+        if (target_device_id) {
+            snprintf(job->target_device_id, sizeof(job->target_device_id), "%s", target_device_id);
+        }
+
+        crossos_result_t rc = s_backend->burn_start(paths,
+                                                    path_count,
+                                                    target_device_id,
+                                                    &job->backend_job,
+                                                    s_backend_user_data);
+        if (rc == CROSSOS_OK && job->backend_job) {
+            job->use_backend = 1;
+            *out_job = job;
+            return CROSSOS_OK;
+        }
+
+        free(job);
+        if (rc != CROSSOS_ERR_UNSUPPORT) {
+            return rc;
+        }
+    }
+
+    return crossos_optical_burn_start_simulated(paths, path_count, target_device_id, out_job);
+}
+
 crossos_result_t crossos_optical_burn_poll(crossos_optical_burn_job_t *job,
                                            crossos_optical_burn_progress_t *out_progress)
 {
     if (!job || !out_progress) {
         crossos__set_error("optical_burn_poll: invalid parameter");
         return CROSSOS_ERR_PARAM;
+    }
+
+    if (job->use_backend) {
+        if (!s_backend || !s_backend->burn_poll) {
+            crossos__set_error("optical_burn_poll: backend missing poll callback");
+            return CROSSOS_ERR_UNSUPPORT;
+        }
+        return s_backend->burn_poll(job->backend_job, out_progress, s_backend_user_data);
     }
 
     memset(out_progress, 0, sizeof(*out_progress));
@@ -315,11 +392,26 @@ crossos_result_t crossos_optical_burn_cancel(crossos_optical_burn_job_t *job)
         return CROSSOS_ERR_PARAM;
     }
 
+    if (job->use_backend) {
+        if (s_backend && s_backend->burn_cancel) {
+            return s_backend->burn_cancel(job->backend_job, s_backend_user_data);
+        }
+        return CROSSOS_OK;
+    }
+
     job->canceled = 1;
     return CROSSOS_OK;
 }
 
 void crossos_optical_burn_free(crossos_optical_burn_job_t *job)
 {
+    if (!job) {
+        return;
+    }
+
+    if (job->use_backend && s_backend && s_backend->burn_free) {
+        s_backend->burn_free(job->backend_job, s_backend_user_data);
+    }
+
     free(job);
 }

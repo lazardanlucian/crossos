@@ -1,5 +1,7 @@
 #include <crossos/crossos.h>
 
+#include "iso_image.h"
+
 #include <ctype.h>
 #include <dirent.h>
 #include <stdio.h>
@@ -45,7 +47,10 @@ typedef struct app_state {
 
     crossos_optical_burn_job_t *burn_job;
     crossos_optical_burn_progress_t burn;
-    char status[128];
+    char status[256];
+    char burn_source_path[1024];
+    uint64_t burn_source_size;
+    int burn_source_is_temp;
 
     crossos_ui_input_t    ui_input;
     crossos_ui_text_buf_t search_buf;   /* file browser filter */
@@ -58,6 +63,143 @@ typedef struct app_state {
 static void set_status(app_state_t *app, const char *msg)
 {
     snprintf(app->status, sizeof(app->status), "%s", msg ? msg : "");
+}
+
+static int ci_cmp(const char *a, const char *b);
+
+static void format_bytes(uint64_t bytes, char *out, size_t out_size)
+{
+    const char *units[] = {"B", "KiB", "MiB", "GiB", "TiB"};
+    double value = (double)bytes;
+    size_t unit = 0;
+
+    while (value >= 1024.0 && unit + 1 < sizeof(units) / sizeof(units[0])) {
+        value /= 1024.0;
+        unit++;
+    }
+
+    snprintf(out, out_size, "%.1f %s", value, units[unit]);
+}
+
+static int has_disc_image_ext(const char *path)
+{
+    const char *ext = strrchr(path, '.');
+    if (!ext) {
+        return 0;
+    }
+    return ci_cmp(ext, ".iso") == 0 || ci_cmp(ext, ".img") == 0 || ci_cmp(ext, ".bin") == 0;
+}
+
+static int stat_path_size(const char *path, uint64_t *out_size)
+{
+    struct stat st;
+    if (stat(path, &st) != 0 || S_ISDIR(st.st_mode)) {
+        return 0;
+    }
+    *out_size = (uint64_t)st.st_size;
+    return 1;
+}
+
+static void clear_burn_source(app_state_t *app)
+{
+    if (app->burn_source_is_temp) {
+        disc_burner_delete_temp_image(app->burn_source_path);
+    }
+    app->burn_source_path[0] = '\0';
+    app->burn_source_size = 0;
+    app->burn_source_is_temp = 0;
+}
+
+static int prepare_burn_source(app_state_t *app)
+{
+    if (app->queue_count == 1 && has_disc_image_ext(app->queue[0])) {
+        if (!stat_path_size(app->queue[0], &app->burn_source_size)) {
+            set_status(app, "Selected image file is unavailable");
+            return 0;
+        }
+        snprintf(app->burn_source_path, sizeof(app->burn_source_path), "%s", app->queue[0]);
+        app->burn_source_is_temp = 0;
+        return 1;
+    }
+
+    {
+        const char *paths[MAX_QUEUE];
+        crossos_result_t rc;
+
+        for (size_t i = 0; i < app->queue_count; i++) {
+            paths[i] = app->queue[i];
+        }
+
+        rc = disc_burner_create_iso_image(paths,
+                                          app->queue_count,
+                                          app->burn_source_path,
+                                          sizeof(app->burn_source_path),
+                                          &app->burn_source_size);
+        if (rc != CROSSOS_OK) {
+            set_status(app, crossos_get_error());
+            return 0;
+        }
+        app->burn_source_is_temp = 1;
+    }
+
+    return 1;
+}
+
+static int preflight_selected_device(app_state_t *app)
+{
+    const crossos_optical_device_t *dev;
+
+    if (app->device_count == 0) {
+        set_status(app, "No optical drive available");
+        clear_burn_source(app);
+        return 0;
+    }
+
+    if (app->selected_device >= app->device_count) {
+        set_status(app, "Selected optical drive is invalid");
+        clear_burn_source(app);
+        return 0;
+    }
+
+    dev = &app->devices[app->selected_device];
+    if (!dev->can_write) {
+        set_status(app, "Selected drive does not report write support");
+        clear_burn_source(app);
+        return 0;
+    }
+
+    if (!dev->has_media) {
+        set_status(app, "Insert writable media before starting the burn");
+        clear_burn_source(app);
+        return 0;
+    }
+
+    if (app->burn_source_size > 0 && dev->media_free_bytes > 0 && app->burn_source_size > dev->media_free_bytes) {
+        char needed[32];
+        char available[32];
+        char message[160];
+        format_bytes(app->burn_source_size, needed, sizeof(needed));
+        format_bytes(dev->media_free_bytes, available, sizeof(available));
+        snprintf(message, sizeof(message), "Queued data needs %s but media has %s free", needed, available);
+        set_status(app, message);
+        clear_burn_source(app);
+        return 0;
+    }
+
+    if (app->burn_source_size > 0 && dev->media_free_bytes == 0 && dev->media_capacity_bytes > 0 &&
+        app->burn_source_size > dev->media_capacity_bytes) {
+        char needed[32];
+        char available[32];
+        char message[160];
+        format_bytes(app->burn_source_size, needed, sizeof(needed));
+        format_bytes(dev->media_capacity_bytes, available, sizeof(available));
+        snprintf(message, sizeof(message), "Queued data needs %s but media capacity is %s", needed, available);
+        set_status(app, message);
+        clear_burn_source(app);
+        return 0;
+    }
+
+    return 1;
 }
 
 static void sleep_ms(int ms)
@@ -277,6 +419,10 @@ static void open_selected(app_state_t *app)
 
 static void start_burn(app_state_t *app)
 {
+    const char *paths[1];
+    const char *dev;
+    crossos_result_t rc;
+
     if (app->burn_job) {
         set_status(app, "Burn already running");
         return;
@@ -287,20 +433,27 @@ static void start_burn(app_state_t *app)
         return;
     }
 
-    const char *paths[MAX_QUEUE];
-    for (size_t i = 0; i < app->queue_count; i++) {
-        paths[i] = app->queue[i];
+    clear_burn_source(app);
+
+    if (!prepare_burn_source(app)) {
+        return;
     }
 
-    const char *dev = (app->device_count > 0) ? app->devices[app->selected_device].id : "virtual-device";
-    crossos_result_t rc = crossos_optical_burn_start_simulated(paths, app->queue_count, dev, &app->burn_job);
+    if (!preflight_selected_device(app)) {
+        return;
+    }
+
+    paths[0] = app->burn_source_path;
+    dev = app->devices[app->selected_device].id;
+    rc = crossos_optical_burn_start(paths, 1, dev, &app->burn_job);
     if (rc != CROSSOS_OK) {
+        clear_burn_source(app);
         set_status(app, crossos_get_error());
         return;
     }
 
     memset(&app->burn, 0, sizeof(app->burn));
-    set_status(app, "Burn started");
+    set_status(app, app->burn_source_is_temp ? "Prepared temporary ISO and started burn" : "Burn started");
 }
 
 static void update_burn(app_state_t *app)
@@ -317,8 +470,18 @@ static void update_burn(app_state_t *app)
     if (app->burn.state == CROSSOS_OPTICAL_BURN_DONE ||
         app->burn.state == CROSSOS_OPTICAL_BURN_FAILED ||
         app->burn.state == CROSSOS_OPTICAL_BURN_CANCELED) {
+        if (app->burn.message[0] != '\0') {
+            set_status(app, app->burn.message);
+        } else if (app->burn.state == CROSSOS_OPTICAL_BURN_DONE) {
+            set_status(app, "Burn completed");
+        } else if (app->burn.state == CROSSOS_OPTICAL_BURN_CANCELED) {
+            set_status(app, "Burn canceled");
+        } else {
+            set_status(app, "Burn failed");
+        }
         crossos_optical_burn_free(app->burn_job);
         app->burn_job = NULL;
+        clear_burn_source(app);
     }
 }
 
@@ -721,6 +884,8 @@ int main(void)
         crossos_optical_burn_free(app.burn_job);
         app.burn_job = NULL;
     }
+
+    clear_burn_source(&app);
 
     crossos_window_destroy(app.window);
     crossos_shutdown();

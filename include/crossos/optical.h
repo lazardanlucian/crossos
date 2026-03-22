@@ -55,6 +55,38 @@ typedef struct crossos_optical_burn_progress {
 
 typedef struct crossos_optical_burn_job crossos_optical_burn_job_t;
 
+typedef struct crossos_optical_backend {
+    crossos_result_t (*list_devices)(crossos_optical_device_t *devices,
+                                     size_t max_devices,
+                                     size_t *out_count,
+                                     void *user_data);
+
+    crossos_result_t (*burn_start)(const char *const *paths,
+                                   size_t path_count,
+                                   const char *target_device_id,
+                                   void **out_backend_job,
+                                   void *user_data);
+
+    crossos_result_t (*burn_poll)(void *backend_job,
+                                  crossos_optical_burn_progress_t *out_progress,
+                                  void *user_data);
+
+    crossos_result_t (*burn_cancel)(void *backend_job,
+                                    void *user_data);
+
+    void (*burn_free)(void *backend_job,
+                      void *user_data);
+} crossos_optical_backend_t;
+
+/**
+ * Register an optional platform/app-provided optical backend.
+ *
+ * This is mainly useful on Android where physical optical writing often
+ * requires app-specific USB host logic or an external service.
+ */
+void crossos_optical_set_backend(const crossos_optical_backend_t *backend,
+                                 void *user_data);
+
 crossos_result_t crossos_optical_list_devices(crossos_optical_device_t *devices,
                                               size_t max_devices,
                                               size_t *out_count);
@@ -63,6 +95,16 @@ crossos_result_t crossos_optical_burn_start_simulated(const char *const *paths,
                                                       size_t path_count,
                                                       const char *target_device_id,
                                                       crossos_optical_burn_job_t **out_job);
+
+/**
+ * Unified burn start API:
+ *  - uses registered backend when available;
+ *  - falls back to simulated burn flow otherwise.
+ */
+crossos_result_t crossos_optical_burn_start(const char *const *paths,
+                                            size_t path_count,
+                                            const char *target_device_id,
+                                            crossos_optical_burn_job_t **out_job);
 
 crossos_result_t crossos_optical_burn_poll(crossos_optical_burn_job_t *job,
                                            crossos_optical_burn_progress_t *out_progress);

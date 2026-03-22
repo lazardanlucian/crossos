@@ -1,1 +1,186 @@
-# crossos
+# CrossOS
+
+A cross-platform **display driver / input SDK** written in C that lets you write a single application and produce separate builds for **Windows**, **Linux**, and **Android** – with no porting required.
+
+## Features
+
+| Feature | Windows | Linux | Android |
+|---|---|---|---|
+| Native window creation | Win32 | X11 | ANativeWindow |
+| Software framebuffer | GDI DIBSection | XPutImage | ANativeWindow_lock |
+| Touch input (multi-touch) | WM_TOUCH / WM_POINTER | XInput2 | AInputEvent |
+| Keyboard events | WM_KEYDOWN/UP | XKeyPress/Release | N/A (on-screen KB) |
+| Mouse / pointer events | WM_LBUTTON, WM_MOUSEMOVE | ButtonPress/Release, MotionNotify | AMotionEvent |
+| Scroll events | WM_MOUSEWHEEL | ButtonPress (Button4/5) | Swipe gestures |
+| Full-screen mode | ✔ | ✔ (_NET_WM_STATE) | always full-screen |
+| Multi-monitor query | ✔ (SM_CMONITORS) | ✔ (ScreenCount) | N/A |
+| Native handle escape | `HWND` | `Window` (XID) | `ANativeWindow*` |
+
+---
+
+## Project layout
+
+```
+crossos/
+├── include/crossos/        Public API headers
+│   ├── crossos.h           Main umbrella – include this one
+│   ├── types.h             Shared types, enums, event structs
+│   ├── window.h            Window management
+│   ├── input.h             Event polling, key codes, touch queries
+│   └── display.h           Software framebuffer + display info
+│
+├── src/
+│   ├── core/init.c         Platform-agnostic lifecycle
+│   └── platform/
+│       ├── windows/        Win32 backend
+│       ├── linux/          X11 / XInput2 backend
+│       └── android/        Android NDK backend
+│
+├── examples/hello_world/   Minimal gradient + event-logger app
+├── tests/                  Headless unit tests (no display needed)
+├── cmake/                  CMake toolchain files
+├── .devcontainer/          Dev-container for GitHub Codespaces / VS Code
+└── CMakeLists.txt
+```
+
+---
+
+## Quick start
+
+### Linux (native)
+
+```bash
+# Prerequisites: cmake, gcc, libx11-dev, libxi-dev
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+cmake --build .
+./hello_world
+```
+
+### Windows (cross-compile from Linux)
+
+```bash
+# Prerequisites: mingw-w64
+cmake -B build-win \
+      -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-mingw64.cmake \
+      -DCMAKE_BUILD_TYPE=Release
+cmake --build build-win
+# Copy build-win/hello_world.exe to a Windows machine and run it.
+```
+
+### Android (arm64-v8a)
+
+```bash
+# Prerequisites: Android NDK r26+ at /opt/android-ndk
+cmake -B build-android \
+      -DCMAKE_TOOLCHAIN_FILE=/opt/android-ndk/build/cmake/android.toolchain.cmake \
+      -DANDROID_ABI=arm64-v8a \
+      -DANDROID_PLATFORM=android-26 \
+      -DCROSSOS_BUILD_EXAMPLES=OFF \
+      -DCROSSOS_BUILD_TESTS=OFF
+cmake --build build-android
+# Produces libcrossos.a; link it into your Android Studio NativeActivity project.
+```
+
+---
+
+## API overview
+
+```c
+#include <crossos/crossos.h>
+
+/* 1. Initialise */
+crossos_init();
+
+/* 2. Create a window */
+crossos_window_t *win = crossos_window_create("My App", 800, 600,
+                                               CROSSOS_WINDOW_RESIZABLE);
+crossos_window_show(win);
+
+/* 3. Software framebuffer */
+crossos_surface_t *surf = crossos_surface_get(win);
+crossos_framebuffer_t fb;
+if (crossos_surface_lock(surf, &fb) == CROSSOS_OK) {
+    /* Write BGRA pixels to fb.pixels */
+    crossos_surface_unlock(surf);
+    crossos_surface_present(surf);
+}
+
+/* 4. Event loop */
+static void on_event(const crossos_event_t *ev, void *ud) {
+    if (ev->type == CROSSOS_EVENT_QUIT) crossos_quit();
+    if (ev->type == CROSSOS_EVENT_TOUCH_BEGIN)
+        printf("touch at (%.0f, %.0f)\n",
+               ev->touch.points[0].x, ev->touch.points[0].y);
+}
+crossos_run_loop(win, on_event, NULL);
+
+/* 5. Clean up */
+crossos_window_destroy(win);
+crossos_shutdown();
+```
+
+For hardware-accelerated rendering (Vulkan, OpenGL ES), retrieve the native window handle and create your own surface:
+
+```c
+void *native = crossos_window_get_native_handle(win);
+/* Windows → HWND, Linux → Window (XID), Android → ANativeWindow* */
+```
+
+---
+
+## Event reference
+
+| Event type | Payload field | Description |
+|---|---|---|
+| `CROSSOS_EVENT_QUIT` | – | App-wide quit signal |
+| `CROSSOS_EVENT_WINDOW_CLOSE` | – | X button / back button |
+| `CROSSOS_EVENT_WINDOW_RESIZE` | `ev.resize.{width,height}` | Client area resized |
+| `CROSSOS_EVENT_KEY_DOWN/UP` | `ev.key.{keycode,scancode,mods,repeat}` | Physical key press |
+| `CROSSOS_EVENT_POINTER_DOWN/UP/MOVE` | `ev.pointer.{x,y,button}` | Mouse / trackpad |
+| `CROSSOS_EVENT_POINTER_SCROLL` | `ev.pointer.{scroll_x,scroll_y}` | Scroll wheel |
+| `CROSSOS_EVENT_TOUCH_BEGIN/UPDATE/END` | `ev.touch.{count,points[]}` | Multi-touch |
+
+---
+
+## Dev container (Codespaces / VS Code)
+
+The repository ships with a `.devcontainer/` configuration that installs:
+
+- `cmake`, `ninja`, `gcc`, `clang`, `clang-format`, `clang-tidy`
+- X11 / XInput2 dev libraries for Linux builds
+- `mingw-w64` for Windows cross-compilation
+- Android NDK r26 for Android cross-compilation
+
+Open the repository in **GitHub Codespaces** or **VS Code with the Dev Containers extension** and the environment is ready automatically.
+
+---
+
+## Running tests
+
+Tests are headless (no display required):
+
+```bash
+cmake -B build -DCROSSOS_BUILD_TESTS=ON
+cmake --build build
+cd build && ctest --output-on-failure
+```
+
+---
+
+## Why not Electron / SDL?
+
+- **Electron** packages a browser and a website – great for web tech, but not for native C/Rust code.
+- **SDL2** is excellent but brings audio/joystick/OpenGL dependencies. CrossOS is deliberately minimal: just window + framebuffer + input.
+- **C (or Rust via FFI)** compiles natively to all targets including Android (via NDK), producing small, dependency-free binaries.
+
+---
+
+## Roadmap
+
+- [ ] Wayland backend (Linux)
+- [ ] macOS / iOS backend (Cocoa / UIKit)
+- [ ] OpenGL ES / Vulkan surface helper
+- [ ] Clipboard read/write
+- [ ] IME / text-input events
+- [ ] Android Studio project template

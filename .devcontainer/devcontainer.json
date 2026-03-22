@@ -1,0 +1,50 @@
+{
+    "name": "CrossOS Dev Environment",
+    "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+
+    // Features install common tools inside the container.
+    "features": {
+        // CMake + Ninja
+        "ghcr.io/devcontainers/features/cmake:1": {
+            "version": "latest"
+        },
+        // GitHub CLI (optional but useful)
+        "ghcr.io/devcontainers/features/github-cli:1": {}
+    },
+
+    // Install extra packages after the base image is set up.
+    "postCreateCommand": "bash .devcontainer/install-deps.sh",
+
+    // Forward the X11 socket so GUI applications can be tested
+    // (requires the host to run an X server, e.g. VcXsrv on Windows).
+    "mounts": [
+        "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind,consistency=cached"
+    ],
+
+    "containerEnv": {
+        "DISPLAY": "${localEnv:DISPLAY}"
+    },
+
+    // VS Code extensions installed automatically.
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-vscode.cpptools",
+                "ms-vscode.cmake-tools",
+                "ms-vscode.cpptools-extension-pack",
+                "llvm-vs-code-extensions.vscode-clangd",
+                "ms-azuretools.vscode-docker",
+                "mhutchie.git-graph"
+            ],
+            "settings": {
+                "editor.formatOnSave": true,
+                "C_Cpp.default.cStandard": "c11",
+                "cmake.buildDirectory": "${workspaceFolder}/build",
+                "cmake.configureArgs": [
+                    "-DCROSSOS_BUILD_EXAMPLES=ON",
+                    "-DCROSSOS_BUILD_TESTS=ON"
+                ]
+            }
+        }
+    }
+}

@@ -10,9 +10,8 @@
 #include <windows.h>
 #else
 #include <dirent.h>
-#include <limits.h>
 #include <sys/stat.h>
-#include <time.h>
+#include <sys/time.h>
 #include <unistd.h>
 #endif
 
@@ -34,11 +33,11 @@ static uint64_t crossos__now_ms(void)
 #if defined(_WIN32)
     return (uint64_t)GetTickCount64();
 #else
-    struct timespec ts;
-    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+    struct timeval tv;
+    if (gettimeofday(&tv, NULL) != 0) {
         return 0;
     }
-    return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)ts.tv_nsec / 1000000ULL;
+    return (uint64_t)tv.tv_sec * 1000ULL + (uint64_t)tv.tv_usec / 1000ULL;
 #endif
 }
 
@@ -88,7 +87,7 @@ static uint64_t crossos__path_size_recursive(const char *path)
 static uint64_t crossos__path_size_recursive(const char *path)
 {
     struct stat st;
-    if (lstat(path, &st) != 0) {
+    if (stat(path, &st) != 0) {
         return 0;
     }
 
@@ -108,7 +107,7 @@ static uint64_t crossos__path_size_recursive(const char *path)
             continue;
         }
 
-        char child[PATH_MAX];
+        char child[2048];
         snprintf(child, sizeof(child), "%s/%s", path, de->d_name);
         total += crossos__path_size_recursive(child);
     }

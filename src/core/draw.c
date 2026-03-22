@@ -1,0 +1,392 @@
+#include <crossos/draw.h>
+
+#include <string.h>
+
+/* ── Clip stack ─────────────────────────────────────────────────────── */
+
+typedef struct { int x, y, w, h; } clip_rect_t;
+static clip_rect_t s_clip_stack[8];
+static int         s_clip_depth = 0;
+
+void crossos_draw_push_clip(int x, int y, int w, int h)
+{
+    if (s_clip_depth >= 8) return;
+    if (s_clip_depth > 0) {
+        /* Intersect with parent */
+        const clip_rect_t *p = &s_clip_stack[s_clip_depth - 1];
+        int nx = x > p->x ? x : p->x;
+        int ny = y > p->y ? y : p->y;
+        int nx2 = (x + w) < (p->x + p->w) ? (x + w) : (p->x + p->w);
+        int ny2 = (y + h) < (p->y + p->h) ? (y + h) : (p->y + p->h);
+        s_clip_stack[s_clip_depth].x = nx;
+        s_clip_stack[s_clip_depth].y = ny;
+        s_clip_stack[s_clip_depth].w = nx2 - nx > 0 ? nx2 - nx : 0;
+        s_clip_stack[s_clip_depth].h = ny2 - ny > 0 ? ny2 - ny : 0;
+    } else {
+        s_clip_stack[s_clip_depth].x = x;
+        s_clip_stack[s_clip_depth].y = y;
+        s_clip_stack[s_clip_depth].w = w;
+        s_clip_stack[s_clip_depth].h = h;
+    }
+    s_clip_depth++;
+}
+
+void crossos_draw_pop_clip(void)
+{
+    if (s_clip_depth > 0) s_clip_depth--;
+}
+
+/* ── Internal helpers ───────────────────────────────────────────────── */
+
+static void put_pixel(const crossos_framebuffer_t *fb,
+                      int x, int y,
+                      crossos_color_t c)
+{
+    if (!fb || !fb->pixels) return;
+    if (x < 0 || y < 0 || x >= fb->width || y >= fb->height) return;
+    if (s_clip_depth > 0) {
+        const clip_rect_t *cl = &s_clip_stack[s_clip_depth - 1];
+        if (x < cl->x || y < cl->y ||
+            x >= cl->x + cl->w || y >= cl->y + cl->h) return;
+    }
+    unsigned char *p = (unsigned char *)fb->pixels + y * fb->stride + x * 4;
+    if (c.a == 255) {
+        p[0] = c.b; p[1] = c.g; p[2] = c.r; p[3] = 255;
+    } else if (c.a > 0) {
+        int a = c.a, ia = 255 - a;
+        p[0] = (unsigned char)((c.b * a + p[0] * ia + 127) >> 8);
+        p[1] = (unsigned char)((c.g * a + p[1] * ia + 127) >> 8);
+        p[2] = (unsigned char)((c.r * a + p[2] * ia + 127) >> 8);
+        p[3] = 255;
+    }
+}
+
+/* ── Color utilities ────────────────────────────────────────────────── */
+
+crossos_color_t crossos_color_lerp(crossos_color_t bg,
+                                   crossos_color_t fg,
+                                   unsigned char alpha)
+{
+    int a = (int)alpha, ia = 255 - a;
+    crossos_color_t out;
+    out.r = (unsigned char)((fg.r * a + bg.r * ia + 127) >> 8);
+    out.g = (unsigned char)((fg.g * a + bg.g * ia + 127) >> 8);
+    out.b = (unsigned char)((fg.b * a + bg.b * ia + 127) >> 8);
+    out.a = 255;
+    return out;
+}
+
+static int clamp8(int v) { return v < 0 ? 0 : (v > 255 ? 255 : v); }
+
+crossos_color_t crossos_color_lighten(crossos_color_t c, int amount)
+{
+    return (crossos_color_t){
+        (unsigned char)clamp8(c.r + amount),
+        (unsigned char)clamp8(c.g + amount),
+        (unsigned char)clamp8(c.b + amount),
+        c.a
+    };
+}
+
+crossos_color_t crossos_color_darken(crossos_color_t c, int amount)
+{
+    return crossos_color_lighten(c, -amount);
+}
+
+/* ── Primitives ─────────────────────────────────────────────────────── */
+
+void crossos_draw_clear(const crossos_framebuffer_t *fb, crossos_color_t color)
+{
+    if (!fb) return;
+    crossos_draw_fill_rect(fb, 0, 0, fb->width, fb->height, color);
+}
+
+void crossos_draw_fill_rect(const crossos_framebuffer_t *fb,
+                            int x, int y, int w, int h,
+                            crossos_color_t color)
+{
+    if (!fb || !fb->pixels || w <= 0 || h <= 0) return;
+
+    /* Fast path: fully-opaque fill without clip */
+    int cx0 = x, cy0 = y, cx1 = x + w, cy1 = y + h;
+    if (s_clip_depth > 0) {
+        const clip_rect_t *cl = &s_clip_stack[s_clip_depth - 1];
+        if (cx0 < cl->x) cx0 = cl->x;
+        if (cy0 < cl->y) cy0 = cl->y;
+        if (cx1 > cl->x + cl->w) cx1 = cl->x + cl->w;
+        if (cy1 > cl->y + cl->h) cy1 = cl->y + cl->h;
+    }
+    if (cx0 < 0) cx0 = 0;
+    if (cy0 < 0) cy0 = 0;
+    if (cx1 > fb->width)  cx1 = fb->width;
+    if (cy1 > fb->height) cy1 = fb->height;
+    if (cx0 >= cx1 || cy0 >= cy1) return;
+
+    if (color.a == 255) {
+        for (int yy = cy0; yy < cy1; yy++) {
+            unsigned char *row =
+                (unsigned char *)fb->pixels + yy * fb->stride + cx0 * 4;
+            for (int xx = cx0; xx < cx1; xx++) {
+                *row++ = color.b;
+                *row++ = color.g;
+                *row++ = color.r;
+                *row++ = 255;
+            }
+        }
+    } else {
+        for (int yy = cy0; yy < cy1; yy++)
+            for (int xx = cx0; xx < cx1; xx++)
+                put_pixel(fb, xx, yy, color);
+    }
+}
+
+void crossos_draw_stroke_rect(const crossos_framebuffer_t *fb,
+                              int x, int y, int w, int h,
+                              int thickness,
+                              crossos_color_t color)
+{
+    if (thickness <= 0) return;
+    crossos_draw_fill_rect(fb, x,            y,            w, thickness, color);
+    crossos_draw_fill_rect(fb, x,            y + h - thickness, w, thickness, color);
+    crossos_draw_fill_rect(fb, x,            y,            thickness, h, color);
+    crossos_draw_fill_rect(fb, x + w - thickness, y,       thickness, h, color);
+}
+
+void crossos_draw_fill_rounded_rect(const crossos_framebuffer_t *fb,
+                                    int x, int y, int w, int h,
+                                    int radius,
+                                    crossos_color_t color)
+{
+    if (!fb || w <= 0 || h <= 0) return;
+    int max_r = (w < h ? w : h) / 2;
+    if (radius > max_r) radius = max_r;
+    if (radius <= 0) { crossos_draw_fill_rect(fb, x, y, w, h, color); return; }
+
+    /* Three non-overlapping rects */
+    crossos_draw_fill_rect(fb, x + radius, y,        w - 2 * radius, h, color);
+    crossos_draw_fill_rect(fb, x,          y + radius, radius, h - 2 * radius, color);
+    crossos_draw_fill_rect(fb, x + w - radius, y + radius, radius, h - 2 * radius, color);
+
+    /* Four corner quarter-discs */
+    int corners[4][2] = {
+        {x + radius,     y + radius},      /* top-left  */
+        {x + w - radius, y + radius},      /* top-right */
+        {x + radius,     y + h - radius},  /* bot-left  */
+        {x + w - radius, y + h - radius},  /* bot-right */
+    };
+    int r2 = radius * radius;
+    for (int dy = 0; dy <= radius; dy++) {
+        for (int dx = 0; dx <= radius; dx++) {
+            if (dx * dx + dy * dy <= r2) {
+                put_pixel(fb, corners[0][0] - dx, corners[0][1] - dy, color);
+                put_pixel(fb, corners[1][0] + dx-1, corners[1][1] - dy, color);
+                put_pixel(fb, corners[2][0] - dx, corners[2][1] + dy-1, color);
+                put_pixel(fb, corners[3][0] + dx-1, corners[3][1] + dy-1, color);
+            }
+        }
+    }
+}
+
+void crossos_draw_stroke_rounded_rect(const crossos_framebuffer_t *fb,
+                                      int x, int y, int w, int h,
+                                      int radius, int thickness,
+                                      crossos_color_t color)
+{
+    if (!fb || thickness <= 0) return;
+    /* Simple approach: draw filled then fill interior with transparent */
+    crossos_draw_fill_rounded_rect(fb, x, y, w, h, radius, color);
+    if (w > thickness * 2 && h > thickness * 2) {
+        int ir = radius - thickness;
+        if (ir < 0) ir = 0;
+        crossos_draw_fill_rounded_rect(fb,
+            x + thickness, y + thickness,
+            w - thickness * 2, h - thickness * 2,
+            ir,
+            (crossos_color_t){0, 0, 0, 0}); /* transparent — caller's bg shows */
+    }
+}
+
+void crossos_draw_fill_circle(const crossos_framebuffer_t *fb,
+                              int cx, int cy, int radius,
+                              crossos_color_t color)
+{
+    if (!fb || radius <= 0) return;
+    int r2 = radius * radius;
+    for (int dy = -radius; dy <= radius; dy++) {
+        for (int dx = -radius; dx <= radius; dx++) {
+            if (dx * dx + dy * dy <= r2)
+                put_pixel(fb, cx + dx, cy + dy, color);
+        }
+    }
+}
+
+void crossos_draw_line(const crossos_framebuffer_t *fb,
+                       int x0, int y0, int x1, int y1,
+                       crossos_color_t color)
+{
+    if (!fb) return;
+    int dx = x1 - x0; if (dx < 0) dx = -dx;
+    int dy = y1 - y0; if (dy < 0) dy = -dy;
+    int sx = x0 < x1 ? 1 : -1;
+    int sy = y0 < y1 ? 1 : -1;
+    int err = dx - dy;
+    for (;;) {
+        put_pixel(fb, x0, y0, color);
+        if (x0 == x1 && y0 == y1) break;
+        int e2 = err * 2;
+        if (e2 > -dy) { err -= dy; x0 += sx; }
+        if (e2 <  dx) { err += dx; y0 += sy; }
+    }
+}
+
+/* ── Glyph table (5×7, both cases + printable punctuation) ──────────── */
+
+/* Each row encodes 5 columns: bit4=leftmost, bit0=rightmost. */
+
+static unsigned char glyph_row(unsigned char c, int row)
+{
+    /* Uppercase */
+    switch (c) {
+    case 'A': { static const unsigned char r[7]={14,17,17,31,17,17,17}; return r[row]; }
+    case 'B': { static const unsigned char r[7]={30,17,17,30,17,17,30}; return r[row]; }
+    case 'C': { static const unsigned char r[7]={14,17,16,16,16,17,14}; return r[row]; }
+    case 'D': { static const unsigned char r[7]={30,17,17,17,17,17,30}; return r[row]; }
+    case 'E': { static const unsigned char r[7]={31,16,16,30,16,16,31}; return r[row]; }
+    case 'F': { static const unsigned char r[7]={31,16,16,30,16,16,16}; return r[row]; }
+    case 'G': { static const unsigned char r[7]={14,17,16,23,17,17,14}; return r[row]; }
+    case 'H': { static const unsigned char r[7]={17,17,17,31,17,17,17}; return r[row]; }
+    case 'I': { static const unsigned char r[7]={14, 4, 4, 4, 4, 4,14}; return r[row]; }
+    case 'J': { static const unsigned char r[7]={ 7, 2, 2, 2, 2,18,12}; return r[row]; }
+    case 'K': { static const unsigned char r[7]={17,18,20,24,20,18,17}; return r[row]; }
+    case 'L': { static const unsigned char r[7]={16,16,16,16,16,16,31}; return r[row]; }
+    case 'M': { static const unsigned char r[7]={17,27,21,21,17,17,17}; return r[row]; }
+    case 'N': { static const unsigned char r[7]={17,25,21,19,17,17,17}; return r[row]; }
+    case 'O': { static const unsigned char r[7]={14,17,17,17,17,17,14}; return r[row]; }
+    case 'P': { static const unsigned char r[7]={30,17,17,30,16,16,16}; return r[row]; }
+    case 'Q': { static const unsigned char r[7]={14,17,17,17,21,18,13}; return r[row]; }
+    case 'R': { static const unsigned char r[7]={30,17,17,30,20,18,17}; return r[row]; }
+    case 'S': { static const unsigned char r[7]={15,16,16,14, 1, 1,30}; return r[row]; }
+    case 'T': { static const unsigned char r[7]={31, 4, 4, 4, 4, 4, 4}; return r[row]; }
+    case 'U': { static const unsigned char r[7]={17,17,17,17,17,17,14}; return r[row]; }
+    case 'V': { static const unsigned char r[7]={17,17,17,17,17,10, 4}; return r[row]; }
+    case 'W': { static const unsigned char r[7]={17,17,17,21,21,21,10}; return r[row]; }
+    case 'X': { static const unsigned char r[7]={17,17,10, 4,10,17,17}; return r[row]; }
+    case 'Y': { static const unsigned char r[7]={17,17,10, 4, 4, 4, 4}; return r[row]; }
+    case 'Z': { static const unsigned char r[7]={31, 1, 2, 4, 8,16,31}; return r[row]; }
+
+    /* Lowercase – occupy rows 2-6 except ascenders b,d,f,h,k,l,t */
+    case 'a': { static const unsigned char r[7]={ 0, 0,14, 1,15,17,15}; return r[row]; }
+    case 'b': { static const unsigned char r[7]={16,16,22,25,17,17,30}; return r[row]; }
+    case 'c': { static const unsigned char r[7]={ 0, 0,14,16,16,17,14}; return r[row]; }
+    case 'd': { static const unsigned char r[7]={ 1, 1,15,17,17,17,15}; return r[row]; }
+    case 'e': { static const unsigned char r[7]={ 0, 0,14,17,31,16,14}; return r[row]; }
+    case 'f': { static const unsigned char r[7]={ 6, 8, 8,28, 8, 8, 8}; return r[row]; }
+    case 'g': { static const unsigned char r[7]={ 0, 0,15,17,15, 1,14}; return r[row]; }
+    case 'h': { static const unsigned char r[7]={16,16,22,25,17,17,17}; return r[row]; }
+    case 'i': { static const unsigned char r[7]={ 0, 4, 0, 4, 4, 4,14}; return r[row]; }
+    case 'j': { static const unsigned char r[7]={ 0, 2, 0, 2, 2,18,12}; return r[row]; }
+    case 'k': { static const unsigned char r[7]={16,16,18,20,24,20,18}; return r[row]; }
+    case 'l': { static const unsigned char r[7]={12, 4, 4, 4, 4, 4,14}; return r[row]; }
+    case 'm': { static const unsigned char r[7]={ 0, 0,27,21,21,21,21}; return r[row]; }
+    case 'n': { static const unsigned char r[7]={ 0, 0,22,25,17,17,17}; return r[row]; }
+    case 'o': { static const unsigned char r[7]={ 0, 0,14,17,17,17,14}; return r[row]; }
+    case 'p': { static const unsigned char r[7]={ 0, 0,30,17,17,30,16}; return r[row]; }
+    case 'q': { static const unsigned char r[7]={ 0, 0,15,17,17,15, 1}; return r[row]; }
+    case 'r': { static const unsigned char r[7]={ 0, 0,22,24,16,16,16}; return r[row]; }
+    case 's': { static const unsigned char r[7]={ 0, 0,14,16,14, 1,30}; return r[row]; }
+    case 't': { static const unsigned char r[7]={ 8, 8,28, 8, 8, 8, 6}; return r[row]; }
+    case 'u': { static const unsigned char r[7]={ 0, 0,17,17,17,19,13}; return r[row]; }
+    case 'v': { static const unsigned char r[7]={ 0, 0,17,17,17,10, 4}; return r[row]; }
+    case 'w': { static const unsigned char r[7]={ 0, 0,17,17,21,21,10}; return r[row]; }
+    case 'x': { static const unsigned char r[7]={ 0, 0,17,10, 4,10,17}; return r[row]; }
+    case 'y': { static const unsigned char r[7]={ 0, 0,17,17,15, 1,14}; return r[row]; }
+    case 'z': { static const unsigned char r[7]={ 0, 0,31, 2, 4, 8,31}; return r[row]; }
+
+    /* Digits */
+    case '0': { static const unsigned char r[7]={14,17,19,21,25,17,14}; return r[row]; }
+    case '1': { static const unsigned char r[7]={ 4,12, 4, 4, 4, 4,14}; return r[row]; }
+    case '2': { static const unsigned char r[7]={14,17, 1, 2, 4, 8,31}; return r[row]; }
+    case '3': { static const unsigned char r[7]={30, 1, 1, 6, 1, 1,30}; return r[row]; }
+    case '4': { static const unsigned char r[7]={ 2, 6,10,18,31, 2, 2}; return r[row]; }
+    case '5': { static const unsigned char r[7]={31,16,16,30, 1, 1,30}; return r[row]; }
+    case '6': { static const unsigned char r[7]={14,16,16,30,17,17,14}; return r[row]; }
+    case '7': { static const unsigned char r[7]={31, 1, 2, 4, 8, 8, 8}; return r[row]; }
+    case '8': { static const unsigned char r[7]={14,17,17,14,17,17,14}; return r[row]; }
+    case '9': { static const unsigned char r[7]={14,17,17,15, 1, 1,14}; return r[row]; }
+
+    /* Punctuation & symbols */
+    case ' ':  return 0;
+    case '!': { static const unsigned char r[7]={ 4, 4, 4, 4, 0, 4, 0}; return r[row]; }
+    case '"': { static const unsigned char r[7]={10,10,10, 0, 0, 0, 0}; return r[row]; }
+    case '#': { static const unsigned char r[7]={10,10,31,10,31,10,10}; return r[row]; }
+    case '$': { static const unsigned char r[7]={ 4,15,20,14, 5,30, 4}; return r[row]; }
+    case '%': { static const unsigned char r[7]={24,25, 2, 4, 8,19, 3}; return r[row]; }
+    case '&': { static const unsigned char r[7]={12,18,20, 8,21,18,13}; return r[row]; }
+    case '\'':{ static const unsigned char r[7]={ 6, 4, 8, 0, 0, 0, 0}; return r[row]; }
+    case '(': { static const unsigned char r[7]={ 2, 4, 8, 8, 8, 4, 2}; return r[row]; }
+    case ')': { static const unsigned char r[7]={ 8, 4, 2, 2, 2, 4, 8}; return r[row]; }
+    case '*': { static const unsigned char r[7]={ 0, 4,21,14,21, 4, 0}; return r[row]; }
+    case '+': { static const unsigned char r[7]={ 0, 4, 4,31, 4, 4, 0}; return r[row]; }
+    case ',': { static const unsigned char r[7]={ 0, 0, 0, 6, 6, 4, 8}; return r[row]; }
+    case '-': { static const unsigned char r[7]={ 0, 0, 0,31, 0, 0, 0}; return r[row]; }
+    case '.': { static const unsigned char r[7]={ 0, 0, 0, 0, 0, 6, 6}; return r[row]; }
+    case '/': { static const unsigned char r[7]={ 1, 2, 4, 4, 8,16, 0}; return r[row]; }
+    case ':': { static const unsigned char r[7]={ 0, 6, 6, 0, 6, 6, 0}; return r[row]; }
+    case ';': { static const unsigned char r[7]={ 0, 6, 6, 0, 6, 4, 8}; return r[row]; }
+    case '<': { static const unsigned char r[7]={ 2, 4, 8,16, 8, 4, 2}; return r[row]; }
+    case '=': { static const unsigned char r[7]={ 0, 0,31, 0,31, 0, 0}; return r[row]; }
+    case '>': { static const unsigned char r[7]={ 8, 4, 2, 1, 2, 4, 8}; return r[row]; }
+    case '?': { static const unsigned char r[7]={14,17, 1, 2, 4, 0, 4}; return r[row]; }
+    case '@': { static const unsigned char r[7]={14,17,23,21,23,16,14}; return r[row]; }
+    case '[': { static const unsigned char r[7]={14, 8, 8, 8, 8, 8,14}; return r[row]; }
+    case '\\':{ static const unsigned char r[7]={16, 8, 4, 4, 2, 1, 0}; return r[row]; }
+    case ']': { static const unsigned char r[7]={14, 2, 2, 2, 2, 2,14}; return r[row]; }
+    case '^': { static const unsigned char r[7]={ 4,10,17, 0, 0, 0, 0}; return r[row]; }
+    case '_': { static const unsigned char r[7]={ 0, 0, 0, 0, 0, 0,31}; return r[row]; }
+    case '`': { static const unsigned char r[7]={ 8, 4, 0, 0, 0, 0, 0}; return r[row]; }
+    case '{': { static const unsigned char r[7]={ 6, 8, 8,24, 8, 8, 6}; return r[row]; }
+    case '|': { static const unsigned char r[7]={ 4, 4, 4, 4, 4, 4, 4}; return r[row]; }
+    case '}': { static const unsigned char r[7]={24, 4, 4, 6, 4, 4,24}; return r[row]; }
+    case '~': { static const unsigned char r[7]={ 0, 0, 8,21, 2, 0, 0}; return r[row]; }
+    default:  { static const unsigned char r[7]={31, 1, 2, 4, 8, 0, 8}; return r[row]; }
+    }
+}
+
+/* ── Text ───────────────────────────────────────────────────────────── */
+
+void crossos_draw_text(const crossos_framebuffer_t *fb,
+                       int x, int y,
+                       const char *text,
+                       crossos_color_t color,
+                       int scale)
+{
+    if (!fb || !text || scale <= 0) return;
+
+    for (int i = 0; text[i] != '\0'; i++) {
+        unsigned char c = (unsigned char)text[i];
+        for (int row = 0; row < 7; row++) {
+            unsigned char bits = glyph_row(c, row);
+            for (int col = 0; col < 5; col++) {
+                if ((bits >> (4 - col)) & 1) {
+                    int px = x + i * (6 * scale) + col * scale;
+                    int py = y + row * scale;
+                    crossos_draw_fill_rect(fb, px, py, scale, scale, color);
+                }
+            }
+        }
+    }
+}
+
+int crossos_draw_text_width(const char *text, int scale)
+{
+    if (!text || scale <= 0) return 0;
+    int len = 0;
+    while (text[len]) len++;
+    return len * 6 * scale;
+}
+
+int crossos_draw_text_height(int scale)
+{
+    return 7 * (scale > 0 ? scale : 1);
+}
+

@@ -26,6 +26,30 @@
 extern volatile int crossos__quit_requested;
 extern void         crossos__set_error(const char *fmt, ...);
 
+/* ── Module-level X11 state ──────────────────────────────────────────── */
+extern Display *s_display;    /* defined in window_x11.c */
+extern Atom     s_wm_delete_window;
+
+/* ── Xdnd atoms ──────────────────────────────────────────────────────── */
+Atom s_xdnd_aware;
+Atom s_xdnd_enter;
+Atom s_xdnd_position;
+Atom s_xdnd_status;
+Atom s_xdnd_drop;
+Atom s_xdnd_finished;
+Atom s_xdnd_selection;
+Atom s_xdnd_type_list;
+Atom s_uri_list;
+static Window s_xdnd_src = None;
+static unsigned long s_xdnd_src_ver = 0;
+
+/* Static drop buffer */
+#define DROP_MAX_FILES 32
+#define DROP_PATH_BUF  512
+static char       s_drop_bufs[DROP_MAX_FILES][DROP_PATH_BUF];
+static const char *s_drop_ptrs[DROP_MAX_FILES];
+static int         s_drop_count = 0;
+
 /* ── Event queue ring-buffer ──────────────────────────────────────────── */
 
 #define QUEUE_CAP 256
@@ -110,9 +134,99 @@ static void process_xevent(XEvent *xev)
 
     switch (xev->type) {
     case ClientMessage: {
+        Atom msg = (Atom)xev->xclient.message_type;
         if ((Atom)xev->xclient.data.l[0] == s_wm_delete_window) {
             ev.type = CROSSOS_EVENT_WINDOW_CLOSE;
             crossos__push_event(&ev);
+        } else if (msg == s_xdnd_enter) {
+            s_xdnd_src     = (Window)xev->xclient.data.l[0];
+            s_xdnd_src_ver = (unsigned long)(xev->xclient.data.l[1] >> 24);
+        } else if (msg == s_xdnd_position) {
+            /* Accept the drop by sending XdndStatus */
+            XClientMessageEvent status;
+            memset(&status, 0, sizeof(status));
+            status.type         = ClientMessage;
+            status.display      = s_display;
+            status.window       = s_xdnd_src;
+            status.message_type = s_xdnd_status;
+            status.format       = 32;
+            status.data.l[0]    = xev->xclient.window;
+            status.data.l[1]    = 1; /* accept */
+            status.data.l[4]    = (long)XInternAtom(s_display, "XdndActionCopy", False);
+            XSendEvent(s_display, s_xdnd_src, False, 0, (XEvent *)&status);
+            XFlush(s_display);
+        } else if (msg == s_xdnd_drop) {
+            /* Request the selection to get file URIs */
+            Time drop_time = (Time)(unsigned long)xev->xclient.data.l[2];
+            XConvertSelection(s_display, s_xdnd_selection, s_uri_list,
+                              s_uri_list, xev->xclient.window, drop_time);
+        }
+        break;
+    }
+    case SelectionNotify: {
+        if (xev->xselection.property != None) {
+            Atom actual_type;
+            int  actual_fmt;
+            unsigned long nitems, bytes_after;
+            unsigned char *data = NULL;
+            XGetWindowProperty(s_display, xev->xselection.requestor,
+                               xev->xselection.property,
+                               0, 65536, True, AnyPropertyType,
+                               &actual_type, &actual_fmt,
+                               &nitems, &bytes_after, &data);
+            if (data) {
+                /* Parse newline-separated "file:///path" URIs */
+                s_drop_count = 0;
+                char *p = (char *)data;
+                while (*p && s_drop_count < DROP_MAX_FILES) {
+                    /* Skip whitespace / \r */
+                    while (*p == '\r' || *p == '\n') p++;
+                    if (!*p) break;
+                    /* Find end of line */
+                    char *end = p;
+                    while (*end && *end != '\r' && *end != '\n') end++;
+                    int len = (int)(end - p);
+                    /* Strip "file://" prefix */
+                    const char *path = p;
+                    if (len > 7 && memcmp(p, "file://", 7) == 0) {
+                        path = p + 7; len -= 7;
+                    }
+                    if (len > 0 && len < DROP_PATH_BUF) {
+                        memcpy(s_drop_bufs[s_drop_count], path, (size_t)len);
+                        s_drop_bufs[s_drop_count][len] = '\0';
+                        s_drop_ptrs[s_drop_count] = s_drop_bufs[s_drop_count];
+                        s_drop_count++;
+                    }
+                    p = end;
+                }
+                XFree(data);
+
+                if (s_drop_count > 0) {
+                    crossos_event_t dev;
+                    memset(&dev, 0, sizeof(dev));
+                    dev.type       = CROSSOS_EVENT_DROP_FILES;
+                    dev.drop.count = s_drop_count;
+                    dev.drop.paths = s_drop_ptrs;
+                    crossos__push_event(&dev);
+                }
+
+                /* Send XdndFinished */
+                if (s_xdnd_src != None) {
+                    XClientMessageEvent fin;
+                    memset(&fin, 0, sizeof(fin));
+                    fin.type         = ClientMessage;
+                    fin.display      = s_display;
+                    fin.window       = s_xdnd_src;
+                    fin.message_type = s_xdnd_finished;
+                    fin.format       = 32;
+                    fin.data.l[0]    = xev->xselection.requestor;
+                    fin.data.l[1]    = 1;
+                    fin.data.l[2]    = (long)XInternAtom(s_display, "XdndActionCopy", False);
+                    XSendEvent(s_display, s_xdnd_src, False, 0, (XEvent *)&fin);
+                    XFlush(s_display);
+                    s_xdnd_src = None;
+                }
+            }
         }
         break;
     }
@@ -140,6 +254,18 @@ static void process_xevent(XEvent *xev)
         ev.key.scancode = (int)xev->xkey.keycode;
         ev.key.mods     = x_state_to_mods(xev->xkey.state);
         crossos__push_event(&ev);
+
+        /* Also emit a CHAR event for printable characters */
+        char cbuf[8];
+        memset(cbuf, 0, sizeof(cbuf));
+        int cl = XLookupString(&xev->xkey, cbuf, sizeof(cbuf)-1, NULL, NULL);
+        if (cl > 0 && (unsigned char)cbuf[0] >= 32 && (unsigned char)cbuf[0] != 127) {
+            crossos_event_t cev;
+            memset(&cev, 0, sizeof(cev));
+            cev.type = CROSSOS_EVENT_CHAR;
+            cev.character.codepoint = (unsigned)(unsigned char)cbuf[0];
+            crossos__push_event(&cev);
+        }
         break;
     }
     case KeyRelease: {

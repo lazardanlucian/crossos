@@ -76,6 +76,26 @@ crossos_result_t crossos__platform_init(void)
     s_net_wm_state_fullscreen =
         XInternAtom(s_display, "_NET_WM_STATE_FULLSCREEN", False);
 
+    /* Xdnd atoms for file-drop support – exposed via extern to input_x11.c */
+    extern Atom s_xdnd_aware;
+    extern Atom s_xdnd_enter;
+    extern Atom s_xdnd_position;
+    extern Atom s_xdnd_status;
+    extern Atom s_xdnd_drop;
+    extern Atom s_xdnd_finished;
+    extern Atom s_xdnd_selection;
+    extern Atom s_xdnd_type_list;
+    extern Atom s_uri_list;
+    s_xdnd_aware     = XInternAtom(s_display, "XdndAware",     False);
+    s_xdnd_enter     = XInternAtom(s_display, "XdndEnter",     False);
+    s_xdnd_position  = XInternAtom(s_display, "XdndPosition",  False);
+    s_xdnd_status    = XInternAtom(s_display, "XdndStatus",    False);
+    s_xdnd_drop      = XInternAtom(s_display, "XdndDrop",      False);
+    s_xdnd_finished  = XInternAtom(s_display, "XdndFinished",  False);
+    s_xdnd_selection = XInternAtom(s_display, "XdndSelection", False);
+    s_xdnd_type_list = XInternAtom(s_display, "XdndTypeList",  False);
+    s_uri_list       = XInternAtom(s_display, "text/uri-list", False);
+
     /* Probe XInput2 for multi-touch */
     int event_base, error_base;
     if (XQueryExtension(s_display, "XInputExtension",
@@ -151,6 +171,14 @@ crossos_window_t *crossos_window_create(const char *title,
 
     XStoreName(s_display, win->xwin, title ? title : "");
     XSetWMProtocols(s_display, win->xwin, &s_wm_delete_window, 1);
+
+    /* Announce Xdnd version 5 so drag sources can send us files */
+    {
+        extern Atom s_xdnd_aware;
+        long xdnd_ver = 5;
+        XChangeProperty(s_display, win->xwin, s_xdnd_aware, XA_ATOM,
+                        32, PropModeReplace, (unsigned char *)&xdnd_ver, 1);
+    }
 
     /* XInput2 multi-touch */
     if (s_xi2_opcode >= 0) {

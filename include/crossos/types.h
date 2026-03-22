@@ -117,6 +117,12 @@ typedef enum crossos_event_type {
     CROSSOS_EVENT_TOUCH_UPDATE,   /**< Existing finger(s) moved             */
     CROSSOS_EVENT_TOUCH_END,      /**< Finger(s) lifted from surface        */
     CROSSOS_EVENT_TOUCH_CANCEL,   /**< Touch sequence cancelled by OS       */
+
+    /* Text input */
+    CROSSOS_EVENT_CHAR,           /**< Unicode codepoint typed by user      */
+
+    /* File drop */
+    CROSSOS_EVENT_DROP_FILES,     /**< User dragged files onto the window   */
 } crossos_event_type_t;
 
 /** Payload for CROSSOS_EVENT_WINDOW_RESIZE. */
@@ -148,6 +154,22 @@ typedef struct crossos_event_touch {
     crossos_touch_point_t points[CROSSOS_MAX_TOUCH_POINTS];
 } crossos_event_touch_t;
 
+/** Payload for CROSSOS_EVENT_CHAR. */
+typedef struct crossos_event_char {
+    unsigned codepoint; /**< Unicode codepoint (Basic Multilingual Plane) */
+} crossos_event_char_t;
+
+/**
+ * Payload for CROSSOS_EVENT_DROP_FILES.
+ * `paths` points into a platform-managed static buffer and is only valid
+ * until the next call to crossos_poll_event().  Copy any paths you need.
+ */
+#define CROSSOS_DROP_FILES_MAX 32
+typedef struct crossos_event_drop {
+    int           count;
+    const char  **paths; /**< Array of `count` NUL-terminated UTF-8 paths */
+} crossos_event_drop_t;
+
 /** Tagged-union event structure delivered to the application. */
 typedef struct crossos_event {
     crossos_event_type_t   type;
@@ -157,6 +179,8 @@ typedef struct crossos_event {
         crossos_event_key_t     key;
         crossos_event_pointer_t pointer;
         crossos_event_touch_t   touch;
+        crossos_event_char_t    character;
+        crossos_event_drop_t    drop;
     };
 } crossos_event_t;
 

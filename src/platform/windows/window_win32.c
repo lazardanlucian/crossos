@@ -19,6 +19,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <windowsx.h>  /* GET_X_LPARAM / GET_Y_LPARAM */
+#include <shellapi.h>  /* DragAcceptFiles, DragQueryFileW, DragFinish */
 
 #include <crossos/crossos.h>
 
@@ -35,6 +36,13 @@ extern void             crossos__push_event(const crossos_event_t *ev);
 static const wchar_t *WCLASS_NAME = L"CrossOSWindow";
 static HINSTANCE       s_hinstance = NULL;
 static int             s_class_registered = 0;
+
+/* Static drop buffer for CROSSOS_EVENT_DROP_FILES payloads. */
+#define DROP_MAX_FILES 32
+#define DROP_PATH_BUF  512
+static char       s_drop_bufs[DROP_MAX_FILES][DROP_PATH_BUF];
+static const char *s_drop_ptrs[DROP_MAX_FILES];
+static int         s_drop_count = 0;
 
 /* ── Internal window structure ────────────────────────────────────────── */
 struct crossos_window {
@@ -74,14 +82,24 @@ static void push_touch_from_pointer(UINT msg, WPARAM wParam, LPARAM lParam,
                                     crossos_window_t *win)
 {
     (void)wParam;
+    if (!win) {
+        return;
+    }
+
     crossos_event_t ev;
     memset(&ev, 0, sizeof(ev));
     ev.window = win;
 
     POINT pt;
-    pt.x = GET_X_LPARAM(lParam);
-    pt.y = GET_Y_LPARAM(lParam);
-    ScreenToClient(win->hwnd, &pt);
+    if (msg == WM_POINTERDOWN || msg == WM_POINTERUP || msg == WM_POINTERUPDATE) {
+        pt.x = GET_X_LPARAM(lParam);
+        pt.y = GET_Y_LPARAM(lParam);
+        ScreenToClient(win->hwnd, &pt);
+    } else {
+        /* Mouse messages already deliver client coordinates in lParam. */
+        pt.x = GET_X_LPARAM(lParam);
+        pt.y = GET_Y_LPARAM(lParam);
+    }
 
     if (msg == WM_POINTERDOWN || msg == WM_LBUTTONDOWN) {
         ev.type = CROSSOS_EVENT_POINTER_DOWN;
@@ -94,6 +112,73 @@ static void push_touch_from_pointer(UINT msg, WPARAM wParam, LPARAM lParam,
     ev.pointer.y = (float)pt.y;
     ev.pointer.button = 1;
     crossos__push_event(&ev);
+}
+
+static crossos_key_mod_t win_mods(void)
+{
+    crossos_key_mod_t m = CROSSOS_MOD_NONE;
+    if (GetKeyState(VK_SHIFT) & 0x8000)   m |= CROSSOS_MOD_SHIFT;
+    if (GetKeyState(VK_CONTROL) & 0x8000) m |= CROSSOS_MOD_CTRL;
+    if (GetKeyState(VK_MENU) & 0x8000)    m |= CROSSOS_MOD_ALT;
+    if ((GetKeyState(VK_LWIN) & 0x8000) || (GetKeyState(VK_RWIN) & 0x8000)) {
+        m |= CROSSOS_MOD_SUPER;
+    }
+    return m;
+}
+
+static int vk_to_crossos(WPARAM vk)
+{
+    if (vk >= '0' && vk <= '9') return (int)vk;
+    if (vk >= 'A' && vk <= 'Z') return (int)vk;
+
+    switch (vk) {
+    case VK_SPACE:    return CROSSOS_KEY_SPACE;
+    case VK_OEM_7:    return CROSSOS_KEY_APOSTROPHE;
+    case VK_OEM_COMMA:return CROSSOS_KEY_COMMA;
+    case VK_OEM_MINUS:return CROSSOS_KEY_MINUS;
+    case VK_OEM_PERIOD:return CROSSOS_KEY_PERIOD;
+    case VK_OEM_2:    return CROSSOS_KEY_SLASH;
+    case VK_OEM_1:    return CROSSOS_KEY_SEMICOLON;
+    case VK_OEM_PLUS: return CROSSOS_KEY_EQUAL;
+
+    case VK_ESCAPE:   return CROSSOS_KEY_ESCAPE;
+    case VK_RETURN:   return CROSSOS_KEY_ENTER;
+    case VK_TAB:      return CROSSOS_KEY_TAB;
+    case VK_BACK:     return CROSSOS_KEY_BACKSPACE;
+    case VK_INSERT:   return CROSSOS_KEY_INSERT;
+    case VK_DELETE:   return CROSSOS_KEY_DELETE;
+    case VK_RIGHT:    return CROSSOS_KEY_RIGHT;
+    case VK_LEFT:     return CROSSOS_KEY_LEFT;
+    case VK_DOWN:     return CROSSOS_KEY_DOWN;
+    case VK_UP:       return CROSSOS_KEY_UP;
+    case VK_PRIOR:    return CROSSOS_KEY_PAGE_UP;
+    case VK_NEXT:     return CROSSOS_KEY_PAGE_DOWN;
+    case VK_HOME:     return CROSSOS_KEY_HOME;
+    case VK_END:      return CROSSOS_KEY_END;
+
+    case VK_F1:  return CROSSOS_KEY_F1;
+    case VK_F2:  return CROSSOS_KEY_F2;
+    case VK_F3:  return CROSSOS_KEY_F3;
+    case VK_F4:  return CROSSOS_KEY_F4;
+    case VK_F5:  return CROSSOS_KEY_F5;
+    case VK_F6:  return CROSSOS_KEY_F6;
+    case VK_F7:  return CROSSOS_KEY_F7;
+    case VK_F8:  return CROSSOS_KEY_F8;
+    case VK_F9:  return CROSSOS_KEY_F9;
+    case VK_F10: return CROSSOS_KEY_F10;
+    case VK_F11: return CROSSOS_KEY_F11;
+    case VK_F12: return CROSSOS_KEY_F12;
+
+    case VK_LSHIFT:   return CROSSOS_KEY_LEFT_SHIFT;
+    case VK_RSHIFT:   return CROSSOS_KEY_RIGHT_SHIFT;
+    case VK_LCONTROL: return CROSSOS_KEY_LEFT_CTRL;
+    case VK_RCONTROL: return CROSSOS_KEY_RIGHT_CTRL;
+    case VK_LMENU:    return CROSSOS_KEY_LEFT_ALT;
+    case VK_RMENU:    return CROSSOS_KEY_RIGHT_ALT;
+    case VK_LWIN:     return CROSSOS_KEY_LEFT_SUPER;
+    case VK_RWIN:     return CROSSOS_KEY_RIGHT_SUPER;
+    default:          return CROSSOS_KEY_UNKNOWN;
+    }
 }
 
 /* ── Window procedure ─────────────────────────────────────────────────── */
@@ -149,7 +234,8 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg,
     case WM_SYSKEYDOWN:
         ev.type         = CROSSOS_EVENT_KEY_DOWN;
         ev.key.scancode = (int)((lParam >> 16) & 0xFF);
-        ev.key.keycode  = (int)wParam;
+        ev.key.keycode  = vk_to_crossos(wParam);
+        ev.key.mods     = win_mods();
         ev.key.repeat   = (lParam & (1 << 30)) ? 1 : 0;
         crossos__push_event(&ev);
         return 0;
@@ -158,7 +244,8 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg,
     case WM_SYSKEYUP:
         ev.type         = CROSSOS_EVENT_KEY_UP;
         ev.key.scancode = (int)((lParam >> 16) & 0xFF);
-        ev.key.keycode  = (int)wParam;
+        ev.key.keycode  = vk_to_crossos(wParam);
+        ev.key.mods     = win_mods();
         crossos__push_event(&ev);
         return 0;
 
@@ -171,6 +258,47 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg,
     case WM_MOUSEMOVE:
         push_touch_from_pointer(msg, wParam, lParam, win);
         return 0;
+
+    case WM_CHAR: {
+        /* UTF-16 codepoint from TranslateMessage; skip control chars */
+        unsigned int cp = (unsigned int)wParam;
+        if (cp >= 32 && cp != 127) {
+            crossos_event_t cev;
+            memset(&cev, 0, sizeof(cev));
+            cev.type           = CROSSOS_EVENT_CHAR;
+            cev.window         = win;
+            cev.character.codepoint = cp;
+            crossos__push_event(&cev);
+        }
+        return 0;
+    }
+
+    case WM_DROPFILES: {
+        HDROP hdrop = (HDROP)wParam;
+        UINT n = DragQueryFileW(hdrop, 0xFFFFFFFF, NULL, 0);
+        if (n > DROP_MAX_FILES) n = DROP_MAX_FILES;
+        s_drop_count = 0;
+        for (UINT i = 0; i < n; i++) {
+            wchar_t wpath[DROP_PATH_BUF];
+            if (DragQueryFileW(hdrop, i, wpath, DROP_PATH_BUF) > 0) {
+                WideCharToMultiByte(CP_UTF8, 0, wpath, -1,
+                    s_drop_bufs[s_drop_count], DROP_PATH_BUF, NULL, NULL);
+                s_drop_ptrs[s_drop_count] = s_drop_bufs[s_drop_count];
+                s_drop_count++;
+            }
+        }
+        DragFinish(hdrop);
+        if (s_drop_count > 0) {
+            crossos_event_t dev;
+            memset(&dev, 0, sizeof(dev));
+            dev.type        = CROSSOS_EVENT_DROP_FILES;
+            dev.window      = win;
+            dev.drop.count  = s_drop_count;
+            dev.drop.paths  = s_drop_ptrs;
+            crossos__push_event(&dev);
+        }
+        return 0;
+    }
 
     case WM_MOUSEWHEEL: {
         POINT pt;
@@ -326,6 +454,7 @@ crossos_window_t *crossos_window_create(const char *title,
 
     SetWindowLongPtrW(win->hwnd, GWLP_USERDATA, (LONG_PTR)win);
     RegisterTouchWindow(win->hwnd, 0);
+    DragAcceptFiles(win->hwnd, TRUE);   /* enable WM_DROPFILES */
 
     /* Create attached surface */
     win->surface = calloc(1, sizeof(*win->surface));

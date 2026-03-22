@@ -19,8 +19,11 @@ option(CROSSOS_BUILD_TESTS    "Build the test suite"       ON)
 set(CROSSOS_SOURCES
     src/core/init.c
     src/core/file.c
+    src/core/dialog.c
     src/core/web.c
     src/core/audio.c
+    src/core/draw.c
+    src/core/ui.c
     src/core/optical.c
     src/core/web_backend_fallback.c
 )
@@ -90,6 +93,19 @@ elseif(UNIX)
     if(X11_Xrandr_FOUND)
         target_link_libraries(crossos PUBLIC ${X11_Xrandr_LIB})
     endif()
+
+    # ALSA PCM streaming
+    find_library(ALSA_LIB asound)
+    if(ALSA_LIB)
+        target_link_libraries(crossos PUBLIC ${ALSA_LIB})
+        target_compile_definitions(crossos PRIVATE CROSSOS_HAS_ALSA=1)
+    else()
+        message(WARNING "libasound not found. PCM audio streaming unavailable on Linux.")
+    endif()
+
+    # pthreads (used by ALSA streaming thread)
+    find_package(Threads REQUIRED)
+    target_link_libraries(crossos PUBLIC Threads::Threads)
 endif()
 
 # Optional HTTP backend
@@ -115,6 +131,7 @@ endif()
 # ── Sub-directories ───────────────────────────────────────────────────────
 if(CROSSOS_BUILD_EXAMPLES)
     add_subdirectory(examples/hello_world)
+    add_subdirectory(examples/disc_burner)
 endif()
 
 if(CROSSOS_BUILD_TESTS AND NOT ANDROID)

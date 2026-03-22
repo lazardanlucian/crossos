@@ -88,6 +88,38 @@ TEST(test_file_roundtrip)
     remove(path);
 }
 
+TEST(test_optical_simulated_burn)
+{
+    const char *path = "crossos_test_burn_payload.tmp";
+    FILE *fp = fopen(path, "wb");
+    CHECK(fp != NULL);
+    if (!fp) {
+        return;
+    }
+
+    const char payload[] = "payload-for-burn";
+    size_t n = fwrite(payload, 1, sizeof(payload), fp);
+    fclose(fp);
+    CHECK(n == sizeof(payload));
+
+    const char *items[] = { path };
+    crossos_optical_burn_job_t *job = NULL;
+    CHECK(crossos_optical_burn_start_simulated(items, 1, "test-device", &job) == CROSSOS_OK);
+    CHECK(job != NULL);
+
+    crossos_optical_burn_progress_t progress;
+    memset(&progress, 0, sizeof(progress));
+    CHECK(crossos_optical_burn_poll(job, &progress) == CROSSOS_OK);
+    CHECK(progress.total_bytes > 0);
+
+    CHECK(crossos_optical_burn_cancel(job) == CROSSOS_OK);
+    CHECK(crossos_optical_burn_poll(job, &progress) == CROSSOS_OK);
+    CHECK(progress.state == CROSSOS_OPTICAL_BURN_CANCELED);
+
+    crossos_optical_burn_free(job);
+    remove(path);
+}
+
 TEST(test_touch_point_limit)
 {
     CHECK(CROSSOS_MAX_TOUCH_POINTS >= 5);
@@ -199,6 +231,7 @@ int main(void)
     RUN(test_pixel_format_enum);
     RUN(test_version_string);
     RUN(test_file_roundtrip);
+    RUN(test_optical_simulated_burn);
     RUN(test_null_window_safety);
     RUN(test_null_surface_safety);
 

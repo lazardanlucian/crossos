@@ -2,7 +2,7 @@
 
 A cross-platform **display driver / input SDK** written in C that lets you write a single application and produce separate builds for **Windows**, **Linux**, and **Android** – with no porting required.
 
-CrossOS now also includes utility modules for file I/O, HTTP API calls, and basic audio playback.
+CrossOS now also includes utility modules for file I/O, HTTP API calls, basic audio playback, optical-disc helpers, and a lightweight software UI toolkit.
 
 ## Features
 
@@ -19,7 +19,13 @@ CrossOS now also includes utility modules for file I/O, HTTP API calls, and basi
 | Native handle escape | `HWND` | `Window` (XID) | `ANativeWindow*` |
 | File I/O helpers | ✔ | ✔ | ✔ |
 | HTTP API requests | ✔ (libcurl) | ✔ (libcurl) | ✔ (libcurl, if linked) |
-| Audio playback | ✔ (PlaySound) | ✔ (`aplay`/`paplay`) | planned |
+| Audio playback | ✔ (PlaySound) | ✔ (`aplay`/`paplay`) | tone playback |
+| Optical device scan | ✔ | ✔ | limited |
+| Optical burn progress API | simulated | simulated | simulated |
+| SDK drawing primitives | ✔ | ✔ | ✔ |
+| SDK UI widgets (label/button/list/progress/dropdown/tree header) | ✔ | ✔ | ✔ |
+| Native file picker API | ✔ | planned | planned |
+| UI layout helper (responsive column flow) | ✔ | ✔ | ✔ |
 
 ---
 
@@ -33,21 +39,31 @@ crossos/
 │   ├── window.h            Window management
 │   ├── input.h             Event polling, key codes, touch queries
 │   ├── display.h           Software framebuffer + display info
+│   ├── draw.h              Software drawing primitives (rectangles, text)
+│   ├── ui.h                Immediate-mode UI widgets + responsive scaling
+│   ├── dialog.h            Native file picker abstraction
 │   ├── file.h              File I/O helpers
 │   ├── web.h               HTTP request helpers
-│   └── audio.h             Basic audio playback
+│   ├── audio.h             Basic audio playback
+│   └── optical.h           Optical-drive and burn-progress helpers
 │
 ├── src/
 │   ├── core/init.c         Platform-agnostic lifecycle
 │   ├── core/file.c         File I/O implementation
-│   ├── core/web.c          HTTP (libcurl) implementation
+│   ├── core/web.c          HTTP public API dispatcher
+│   ├── core/web_backend_*.c HTTP transport backends (curl/fallback)
 │   ├── core/audio.c        Audio helpers implementation
+│   ├── core/draw.c         Drawing helpers implementation
+│   ├── core/ui.c           UI helpers implementation
+│   ├── core/dialog.c       File picker implementation (Windows first)
+│   ├── core/optical.c      Optical device + simulated burn implementation
 │   └── platform/
 │       ├── windows/        Win32 backend
 │       ├── linux/          X11 / XInput2 backend
 │       └── android/        Android NDK backend
 │
 ├── examples/hello_world/   Minimal gradient + event-logger app
+├── examples/disc_burner/   File browser + burn queue + progress UI demo
 ├── tests/                  Headless unit tests (no display needed)
 ├── cmake/                  CMake toolchain files
 ├── .devcontainer/          Dev-container for GitHub Codespaces / VS Code

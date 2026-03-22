@@ -23,6 +23,7 @@ import java.nio.ByteOrder;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 public final class CrossOSUsbBurner {
@@ -34,6 +35,7 @@ public final class CrossOSUsbBurner {
     private static UsbManager usbManager;
     private static volatile boolean receiverRegistered;
     private static volatile String lastError = "";
+    private static final AtomicBoolean s_device_list_changed = new AtomicBoolean(true);
 
     private static final Object permissionLock = new Object();
     private static final Map<Integer, Boolean> permissionResults = new HashMap<>();
@@ -53,6 +55,8 @@ public final class CrossOSUsbBurner {
 
         if (!receiverRegistered) {
             IntentFilter filter = new IntentFilter(ACTION_USB_PERMISSION);
+            filter.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED);
+            filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
             if (Build.VERSION.SDK_INT >= 33) {
                 activity.registerReceiver(permissionReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
             } else {
@@ -66,6 +70,15 @@ public final class CrossOSUsbBurner {
 
     public static synchronized String getLastError() {
         return lastError;
+    }
+
+    /**
+     * Returns {@code true} if the USB device list has changed since the last
+     * call and resets the flag.  The flag starts as {@code true} so that the
+     * first call always triggers an initial device scan.
+     */
+    public static boolean pollDeviceListChanged() {
+        return s_device_list_changed.getAndSet(false);
     }
 
     public static synchronized String listDevices(Activity activity) {
@@ -92,10 +105,10 @@ public final class CrossOSUsbBurner {
 
             sb.append(id).append('\t')
                 .append(escape(label)).append('\t')
-                .append(1).append('\t')
-                .append(1).append('\t')
-                .append(probe.hasMedia ? 1 : 0).append('\t')
-                .append(1).append('\t')
+                .append(1).append('\t')                        /* is_usb     */
+                .append(1).append('\t')                        /* can_read   */
+                .append(1).append('\t')                        /* can_write  */
+                .append(probe.hasMedia ? 1 : 0).append('\t')  /* has_media  */
                 .append(probe.capacityBytes).append('\t')
                 .append(probe.freeBytes).append('\n');
         }
@@ -648,7 +661,15 @@ public final class CrossOSUsbBurner {
     private static final BroadcastReceiver permissionReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            if (!ACTION_USB_PERMISSION.equals(intent.getAction())) {
+            String action = intent.getAction();
+
+            if (UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(action) ||
+                    UsbManager.ACTION_USB_DEVICE_DETACHED.equals(action)) {
+                s_device_list_changed.set(true);
+                return;
+            }
+
+            if (!ACTION_USB_PERMISSION.equals(action)) {
                 return;
             }
 

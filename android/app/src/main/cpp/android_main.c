@@ -23,6 +23,7 @@
 #define MAX_DEVICES 16
 
 extern void crossos_android_set_app(struct android_app *app);
+extern int  crossos_android_poll_usb_changed(void);
 
 typedef struct file_entry {
     char name[256];
@@ -1068,6 +1069,9 @@ void android_main(struct android_app *android_app)
         crossos_event_t ev;
         while (crossos_poll_event(&ev)) {
             handle_event(&app, &ev);
+        }
+        if (crossos_android_poll_usb_changed()) {
+            refresh_devices(&app);
         }
         update_burn(&app);
         render(&app);

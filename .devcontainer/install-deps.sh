@@ -19,6 +19,7 @@ echo "=== CrossOS dev-container setup ==="
 apt-get update -qq
 apt-get install -y --no-install-recommends \
     build-essential \
+    cmake \
     clang \
     clang-format \
     clang-tidy \

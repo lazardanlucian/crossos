@@ -33,6 +33,24 @@ typedef struct app_state {
     int running;
 } app_state_t;
 
+static int wait_for_native_window(struct android_app *app)
+{
+    while (!app->window) {
+        int events;
+        struct android_poll_source *source = NULL;
+        if (ALooper_pollAll(-1, NULL, &events, (void **)&source) >= 0) {
+            if (source) {
+                source->process(app, source);
+            }
+        }
+        if (app->destroyRequested) {
+            LOGE("destroy requested before window was initialized");
+            return 0;
+        }
+    }
+    return 1;
+}
+
 static void on_event(const crossos_event_t *ev, void *ud)
 {
     app_state_t *app = (app_state_t *)ud;
@@ -56,6 +74,10 @@ static void on_event(const crossos_event_t *ev, void *ud)
 void android_main(struct android_app *app)
 {
     crossos_android_set_app(app);
+
+    if (!wait_for_native_window(app)) {
+        return;
+    }
 
     if (crossos_init() != CROSSOS_OK) {
         LOGE("crossos_init failed: %s", crossos_get_error());

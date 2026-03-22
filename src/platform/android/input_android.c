@@ -37,6 +37,7 @@ void crossos__push_event(const crossos_event_t *ev)
 {
     int next = (s_head + 1) % QUEUE_CAP;
     if (next == s_tail) return; /* queue full – drop incoming event */
+    s_queue[s_head] = *ev;
     s_head = next;
 }
 

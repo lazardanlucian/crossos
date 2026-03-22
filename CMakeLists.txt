@@ -21,6 +21,8 @@ set(CROSSOS_SOURCES
     src/core/file.c
     src/core/web.c
     src/core/audio.c
+    src/core/optical.c
+    src/core/web_backend_fallback.c
 )
 
 if(WIN32)
@@ -93,10 +95,11 @@ endif()
 # Optional HTTP backend
 find_package(CURL QUIET)
 if(CURL_FOUND)
+    target_sources(crossos PRIVATE src/core/web_backend_curl.c)
     target_link_libraries(crossos PUBLIC CURL::libcurl)
     target_compile_definitions(crossos PRIVATE CROSSOS_HAS_CURL=1)
 else()
-    message(WARNING "libcurl not found. crossos/web.h APIs will return CROSSOS_ERR_UNSUPPORT.")
+    message(WARNING "libcurl not found. crossos_http_* supports only plain http:// URLs on non-Windows without libcurl.")
 endif()
 
 # ── Compiler warnings ────────────────────────────────────────────────────

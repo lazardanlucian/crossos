@@ -36,6 +36,7 @@
 #include "file.h"
 #include "web.h"
 #include "audio.h"
+#include "optical.h"
 
 #ifdef __cplusplus
 extern "C" {

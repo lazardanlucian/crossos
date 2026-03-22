@@ -16,6 +16,26 @@
 },
 {
   "directory": "/workspaces/crossos/android/app/.cxx/Debug/495a3a43/armeabi-v7a",
+  "command": "/opt/android-sdk/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/bin/clang --target=armv7-none-linux-androideabi26 --sysroot=/opt/android-sdk/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/sysroot -I/workspaces/crossos/include -I/opt/android-sdk/ndk/26.3.11579264/sources/android/native_app_glue -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -march=armv7-a -mthumb -Wformat -Werror=format-security  -fno-limit-debug-info  -fPIC -Wall -Wextra -Wpedantic -Wno-unused-parameter -std=c11 -o crossos-build/CMakeFiles/crossos.dir/src/core/file.c.o -c /workspaces/crossos/src/core/file.c",
+  "file": "/workspaces/crossos/src/core/file.c"
+},
+{
+  "directory": "/workspaces/crossos/android/app/.cxx/Debug/495a3a43/armeabi-v7a",
+  "command": "/opt/android-sdk/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/bin/clang --target=armv7-none-linux-androideabi26 --sysroot=/opt/android-sdk/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/sysroot -I/workspaces/crossos/include -I/opt/android-sdk/ndk/26.3.11579264/sources/android/native_app_glue -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -march=armv7-a -mthumb -Wformat -Werror=format-security  -fno-limit-debug-info  -fPIC -Wall -Wextra -Wpedantic -Wno-unused-parameter -std=c11 -o crossos-build/CMakeFiles/crossos.dir/src/core/web.c.o -c /workspaces/crossos/src/core/web.c",
+  "file": "/workspaces/crossos/src/core/web.c"
+},
+{
+  "directory": "/workspaces/crossos/android/app/.cxx/Debug/495a3a43/armeabi-v7a",
+  "command": "/opt/android-sdk/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/bin/clang --target=armv7-none-linux-androideabi26 --sysroot=/opt/android-sdk/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/sysroot -I/workspaces/crossos/include -I/opt/android-sdk/ndk/26.3.11579264/sources/android/native_app_glue -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -march=armv7-a -mthumb -Wformat -Werror=format-security  -fno-limit-debug-info  -fPIC -Wall -Wextra -Wpedantic -Wno-unused-parameter -std=c11 -o crossos-build/CMakeFiles/crossos.dir/src/core/audio.c.o -c /workspaces/crossos/src/core/audio.c",
+  "file": "/workspaces/crossos/src/core/audio.c"
+},
+{
+  "directory": "/workspaces/crossos/android/app/.cxx/Debug/495a3a43/armeabi-v7a",
+  "command": "/opt/android-sdk/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/bin/clang --target=armv7-none-linux-androideabi26 --sysroot=/opt/android-sdk/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/sysroot -I/workspaces/crossos/include -I/opt/android-sdk/ndk/26.3.11579264/sources/android/native_app_glue -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -march=armv7-a -mthumb -Wformat -Werror=format-security  -fno-limit-debug-info  -fPIC -Wall -Wextra -Wpedantic -Wno-unused-parameter -std=c11 -o crossos-build/CMakeFiles/crossos.dir/src/core/web_backend_fallback.c.o -c /workspaces/crossos/src/core/web_backend_fallback.c",
+  "file": "/workspaces/crossos/src/core/web_backend_fallback.c"
+},
+{
+  "directory": "/workspaces/crossos/android/app/.cxx/Debug/495a3a43/armeabi-v7a",
   "command": "/opt/android-sdk/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/bin/clang --target=armv7-none-linux-androideabi26 --sysroot=/opt/android-sdk/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/sysroot -I/workspaces/crossos/include -I/opt/android-sdk/ndk/26.3.11579264/sources/android/native_app_glue -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -march=armv7-a -mthumb -Wformat -Werror=format-security  -fno-limit-debug-info  -fPIC -Wall -Wextra -Wpedantic -Wno-unused-parameter -std=c11 -o crossos-build/CMakeFiles/crossos.dir/src/platform/android/window_android.c.o -c /workspaces/crossos/src/platform/android/window_android.c",
   "file": "/workspaces/crossos/src/platform/android/window_android.c"
 },

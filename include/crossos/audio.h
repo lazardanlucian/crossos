@@ -20,7 +20,7 @@ extern "C" {
  * Platform notes:
  * - Windows: uses PlaySound (WAV files are recommended).
  * - Linux: invokes "aplay" or "paplay" if available.
- * - Android: currently returns CROSSOS_ERR_UNSUPPORT.
+ * - Android: plays a short notification tone via ToneGenerator.
  */
 crossos_result_t crossos_sound_play_file(const char *path);
 

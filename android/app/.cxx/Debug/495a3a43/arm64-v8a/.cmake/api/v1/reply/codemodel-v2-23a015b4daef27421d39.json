@@ -26,7 +26,7 @@
 				{
 					"build" : "crossos-build",
 					"hasInstallRule" : true,
-					"jsonFile" : "directory-crossos-build-Debug-6c393c0b0fd89905bb3b.json",
+					"jsonFile" : "directory-crossos-build-Debug-d9e598d64a0e06b371c8.json",
 					"minimumCMakeVersion" : 
 					{
 						"string" : "3.21"
@@ -76,14 +76,14 @@
 				{
 					"directoryIndex" : 1,
 					"id" : "crossos::@24c113f0400fe2eefda9",
-					"jsonFile" : "target-crossos-Debug-b2abc75efe913bef9adc.json",
+					"jsonFile" : "target-crossos-Debug-a8ca6e49a3e9328c7044.json",
 					"name" : "crossos",
 					"projectIndex" : 1
 				},
 				{
 					"directoryIndex" : 0,
 					"id" : "crossos_hello::@6890427a1f51a3e7e1df",
-					"jsonFile" : "target-crossos_hello-Debug-c6ba2808f39a6b8bcad3.json",
+					"jsonFile" : "target-crossos_hello-Debug-2b345c00b04a4b972906.json",
 					"name" : "crossos_hello",
 					"projectIndex" : 0
 				}
@@ -93,7 +93,7 @@
 	"kind" : "codemodel",
 	"paths" : 
 	{
-		"build" : "/workspaces/crossos/android/app/.cxx/Debug/495a3a43/armeabi-v7a",
+		"build" : "/workspaces/crossos/android/app/.cxx/Debug/495a3a43/arm64-v8a",
 		"source" : "/workspaces/crossos/android/app/src/main/cpp"
 	},
 	"version" : 

@@ -26,7 +26,7 @@
 				{
 					"build" : "crossos-build",
 					"hasInstallRule" : true,
-					"jsonFile" : "directory-crossos-build-Debug-6c393c0b0fd89905bb3b.json",
+					"jsonFile" : "directory-crossos-build-Debug-d9e598d64a0e06b371c8.json",
 					"minimumCMakeVersion" : 
 					{
 						"string" : "3.21"
@@ -76,7 +76,7 @@
 				{
 					"directoryIndex" : 1,
 					"id" : "crossos::@24c113f0400fe2eefda9",
-					"jsonFile" : "target-crossos-Debug-19918a4dd1f2cf0dbb31.json",
+					"jsonFile" : "target-crossos-Debug-a8ca6e49a3e9328c7044.json",
 					"name" : "crossos",
 					"projectIndex" : 1
 				},

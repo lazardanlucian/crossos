@@ -44,6 +44,8 @@
 #include "image.h"
 #include "camera.h"
 #include "font.h"
+#include "websocket.h"
+#include "msgqueue.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -52,10 +54,10 @@ extern "C" {
 /* ── SDK version ──────────────────────────────────────────────────────── */
 
 #define CROSSOS_VERSION_MAJOR 0
-#define CROSSOS_VERSION_MINOR 4
+#define CROSSOS_VERSION_MINOR 5
 #define CROSSOS_VERSION_PATCH 0
 
-#define CROSSOS_VERSION_STRING "0.4.0"
+#define CROSSOS_VERSION_STRING "0.5.0"
 
 /* ── SDK lifecycle ────────────────────────────────────────────────────── */
 

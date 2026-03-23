@@ -31,6 +31,8 @@ typedef enum crossos_result {
     CROSSOS_ERR_AUDIO     = -9, /**< Audio subsystem error                 */
     CROSSOS_ERR_BLUETOOTH = -10,/**< Bluetooth subsystem error             */
     CROSSOS_ERR_CAMERA    = -11,/**< Camera subsystem error                */
+    CROSSOS_ERR_WS        = -12,/**< WebSocket protocol / connection error  */
+    CROSSOS_ERR_TIMEOUT   = -13,/**< Operation timed out                    */
 } crossos_result_t;
 
 /* ── Opaque handle types ──────────────────────────────────────────────── */

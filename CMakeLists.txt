@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(crossos
-    VERSION   0.4.0
+    VERSION   0.5.0
     LANGUAGES C
     DESCRIPTION "Cross-platform display driver / input SDK"
 )
@@ -29,6 +29,8 @@ set(CROSSOS_SOURCES
     src/core/image.c
     src/core/camera.c
     src/core/font.c
+    src/core/websocket.c
+    src/core/msgqueue.c
     src/core/web_backend_fallback.c
 )
 
@@ -88,6 +90,10 @@ elseif(ANDROID)
     else()
         target_link_libraries(crossos PUBLIC ${ANDROID_LIB} ${LOG_LIB})
     endif()
+
+    # pthreads – msgqueue and websocket background threads
+    find_package(Threads REQUIRED)
+    target_link_libraries(crossos PUBLIC Threads::Threads)
 
 elseif(UNIX)
     find_package(X11 REQUIRED)

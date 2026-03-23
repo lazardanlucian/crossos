@@ -33,6 +33,7 @@ typedef struct file_entry {
 } file_entry_t;
 
 typedef struct app_state {
+    struct android_app *android_app;
     crossos_window_t *window;
     crossos_surface_t *surface;
     int running;
@@ -58,13 +59,20 @@ typedef struct app_state {
 
     crossos_ui_input_t ui_input;
     crossos_ui_text_buf_t search_buf;
+    int search_focus_prev;
+    int search_dialog_open;
     crossos_ui_scroll_t file_scroll;
     crossos_ui_scroll_t queue_scroll;
     int show_device_dropdown;
     int dragging_over;
 } app_state_t;
 
+static app_state_t *g_active_app = NULL;
+static char g_pending_filter[CROSSOS_UI_TEXT_MAX];
+static volatile int g_pending_filter_set = 0;
+
 static int ci_cmp(const char *a, const char *b);
+static void open_selected(app_state_t *app);
 
 static void set_status(app_state_t *app, const char *msg)
 {
@@ -367,6 +375,84 @@ static int get_external_files_dir(struct android_app *app, char *out_path, size_
     return 1;
 }
 
+static void request_filter_dialog(app_state_t *app)
+{
+    JNIEnv *env;
+    int did_attach = 0;
+    jobject activity;
+    jclass activity_class;
+    jmethodID mid_show_filter;
+    jstring initial;
+
+    if (!app || !app->android_app || app->search_dialog_open) {
+        return;
+    }
+    if (!get_env(app->android_app, &env, &did_attach)) {
+        return;
+    }
+
+    activity = app->android_app->activity->clazz;
+    activity_class = (*env)->GetObjectClass(env, activity);
+    if (!activity_class) {
+        detach_env(app->android_app, did_attach);
+        return;
+    }
+
+    mid_show_filter = (*env)->GetMethodID(env,
+                                          activity_class,
+                                          "showFilterInput",
+                                          "(Ljava/lang/String;)V");
+    if (!mid_show_filter) {
+        (*env)->DeleteLocalRef(env, activity_class);
+        (*env)->ExceptionClear(env);
+        detach_env(app->android_app, did_attach);
+        return;
+    }
+
+    initial = (*env)->NewStringUTF(env, app->search_buf.buf);
+    (*env)->CallVoidMethod(env, activity, mid_show_filter, initial);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+    }
+
+    if (initial) {
+        (*env)->DeleteLocalRef(env, initial);
+    }
+    (*env)->DeleteLocalRef(env, activity_class);
+    detach_env(app->android_app, did_attach);
+    app->search_dialog_open = 1;
+}
+
+JNIEXPORT void JNICALL
+Java_io_crossos_hello_CrossOSNativeActivity_nativeSetFilterText(JNIEnv *env,
+                                                                 jclass clazz,
+                                                                 jstring text)
+{
+    const char *utf = NULL;
+    (void)clazz;
+
+    if (!g_active_app) {
+        return;
+    }
+
+    if (!text) {
+        g_active_app->search_dialog_open = 0;
+        return;
+    }
+
+    utf = (*env)->GetStringUTFChars(env, text, NULL);
+    if (!utf) {
+        g_active_app->search_dialog_open = 0;
+        return;
+    }
+
+    snprintf(g_pending_filter, sizeof(g_pending_filter), "%s", utf);
+    g_pending_filter_set = 1;
+
+    (*env)->ReleaseStringUTFChars(env, text, utf);
+    g_active_app->search_dialog_open = 0;
+}
+
 static void init_start_directory(struct android_app *android_app, app_state_t *app)
 {
     char external_dir[1024];
@@ -513,7 +599,17 @@ static void pick_files_to_queue(app_state_t *app)
     rc = crossos_dialog_pick_files("Select files to burn", 1, &files);
     if (rc != CROSSOS_OK) {
         if (rc == CROSSOS_ERR_UNSUPPORT) {
-            set_status(app, "Picker unavailable. Browse storage and tap Add instead");
+            if (app->file_count > 0) {
+                const file_entry_t *entry = &app->files[app->selected_index];
+                if (entry->is_dir) {
+                    open_selected(app);
+                    set_status(app, "Opened selected folder");
+                } else {
+                    add_selected_to_queue(app);
+                }
+            } else {
+                set_status(app, "Picker unavailable. Browse storage and tap Add instead");
+            }
         } else {
             set_status(app, crossos_get_error());
         }
@@ -693,6 +789,7 @@ static void render(app_state_t *app)
     char line[256];
     char hdr[96];
     const char *filter;
+    int search_focused;
 
     if (!app->surface || crossos_surface_lock(app->surface, &fb) != CROSSOS_OK) {
         return;
@@ -732,7 +829,17 @@ static void render(app_state_t *app)
     list_h = body_h - search_h - 4 * scale;
     row_h = 16 * scale;
 
-    crossos_ui_text_input(&ui, left_x, search_y, left_w, search_h, &app->search_buf, "Filter files...");
+    search_focused = crossos_ui_text_input(&ui,
+                                           left_x,
+                                           search_y,
+                                           left_w,
+                                           search_h,
+                                           &app->search_buf,
+                                           "Filter files...");
+    if (search_focused && !app->search_focus_prev && !app->search_dialog_open) {
+        request_filter_dialog(app);
+    }
+    app->search_focus_prev = search_focused;
 
     filter = app->search_buf.buf;
     for (size_t fi = 0; fi < app->file_count; fi++) {
@@ -777,7 +884,9 @@ static void render(app_state_t *app)
             if (crossos_ui_selectable(&ui, left_x, row_y, left_w - 10 * scale, row_h - 1,
                                       line, (size_t)fi == app->selected_index)) {
                 app->selected_index = (size_t)fi;
-                if (app->ui_input.pointer_pressed) {
+                if (entry->is_dir) {
+                    open_selected(app);
+                } else {
                     add_selected_to_queue(app);
                 }
             }
@@ -1047,9 +1156,11 @@ void android_main(struct android_app *android_app)
     }
 
     memset(&app, 0, sizeof(app));
+    app.android_app = android_app;
     app.running = 1;
     app.burn.state = CROSSOS_OPTICAL_BURN_IDLE;
     init_start_directory(android_app, &app);
+    g_active_app = &app;
 
     app.window = crossos_window_create("CrossOS Disc Burner", 0, 0, 0);
     if (!app.window) {
@@ -1067,6 +1178,14 @@ void android_main(struct android_app *android_app)
 
     while (app.running) {
         crossos_event_t ev;
+        if (g_pending_filter_set) {
+            g_pending_filter_set = 0;
+            snprintf(app.search_buf.buf, sizeof(app.search_buf.buf), "%s", g_pending_filter);
+            app.search_buf.len = (int)strlen(app.search_buf.buf);
+            app.search_buf.cursor = app.search_buf.len;
+            app.search_buf.focused = 0;
+            app.search_focus_prev = 0;
+        }
         while (crossos_poll_event(&ev)) {
             handle_event(&app, &ev);
         }
@@ -1084,6 +1203,7 @@ void android_main(struct android_app *android_app)
         app.burn_job = NULL;
     }
     clear_burn_source(&app);
+    g_active_app = NULL;
     crossos_window_destroy(app.window);
     crossos_shutdown();
 }

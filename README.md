@@ -222,6 +222,36 @@ cmake --build build
 cd build && ctest --output-on-failure
 ```
 
+## Build all platforms/apps (SDK compile check)
+
+Use the repository script to rebuild all major targets after SDK updates:
+
+```bash
+./scripts/build_all.sh --clean
+```
+
+What it runs by default:
+
+- Linux CMake build + tests
+- Windows cross-compile build (mingw toolchain)
+- Android NDK CMake build (`libcrossos.a`)
+- Android Gradle APK build (`assembleDebug`)
+
+Useful options:
+
+```bash
+./scripts/build_all.sh --stop-on-error
+./scripts/build_all.sh --android-apk-only
+./scripts/build_all.sh --no-android-apk
+```
+
+Environment overrides:
+
+- `BUILD_TYPE` (default `Release`)
+- `ANDROID_NDK` (default `/opt/android-ndk`)
+- `ANDROID_ABI` (default `arm64-v8a`)
+- `ANDROID_PLATFORM` (default `android-26`)
+
 ---
 
 ## Why not Electron / SDL?

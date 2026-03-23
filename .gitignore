@@ -3,6 +3,15 @@ build/
 build-*/
 out/
 cmake-build-*/
+artifacts/
+
+# Android / Gradle local and generated output
+android/.gradle/
+android/.cxx/
+android/app/.cxx/
+android/app/build/
+android/local.properties
+android/.idea/
 
 # CMake cache and generated files
 CMakeCache.txt
@@ -21,6 +30,7 @@ CTestTestfile.cmake
 *.dll
 *.dylib
 *.exe
+*.apk
 
 # IDE / editor
 .vscode/settings.json

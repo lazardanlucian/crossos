@@ -23,16 +23,18 @@
 #define MAX_DEVICES 16
 
 extern void crossos_android_set_app(struct android_app *app);
-extern int  crossos_android_poll_usb_changed(void);
+extern int crossos_android_poll_usb_changed(void);
 
-typedef struct file_entry {
+typedef struct file_entry
+{
     char name[256];
     char path[1024];
     int is_dir;
     uint64_t size;
 } file_entry_t;
 
-typedef struct app_state {
+typedef struct app_state
+{
     struct android_app *android_app;
     crossos_window_t *window;
     crossos_surface_t *surface;
@@ -77,6 +79,7 @@ static volatile int g_pending_pick_set = 0;
 static int ci_cmp(const char *a, const char *b);
 static void open_selected(app_state_t *app);
 static void refresh_files(app_state_t *app);
+static int choose_accessible_directory(app_state_t *app);
 
 static void set_status(app_state_t *app, const char *msg)
 {
@@ -89,7 +92,8 @@ static void format_bytes(uint64_t bytes, char *out, size_t out_size)
     double value = (double)bytes;
     size_t unit = 0;
 
-    while (value >= 1024.0 && unit + 1 < sizeof(units) / sizeof(units[0])) {
+    while (value >= 1024.0 && unit + 1 < sizeof(units) / sizeof(units[0]))
+    {
         value /= 1024.0;
         unit++;
     }
@@ -100,7 +104,8 @@ static void format_bytes(uint64_t bytes, char *out, size_t out_size)
 static int has_disc_image_ext(const char *path)
 {
     const char *ext = strrchr(path, '.');
-    if (!ext) {
+    if (!ext)
+    {
         return 0;
     }
     return ci_cmp(ext, ".iso") == 0 || ci_cmp(ext, ".img") == 0 || ci_cmp(ext, ".bin") == 0;
@@ -109,7 +114,8 @@ static int has_disc_image_ext(const char *path)
 static int stat_path_size(const char *path, uint64_t *out_size)
 {
     struct stat st;
-    if (stat(path, &st) != 0 || S_ISDIR(st.st_mode)) {
+    if (stat(path, &st) != 0 || S_ISDIR(st.st_mode))
+    {
         return 0;
     }
     *out_size = (uint64_t)st.st_size;
@@ -118,7 +124,8 @@ static int stat_path_size(const char *path, uint64_t *out_size)
 
 static void clear_burn_source(app_state_t *app)
 {
-    if (app->burn_source_is_temp) {
+    if (app->burn_source_is_temp)
+    {
         disc_burner_delete_temp_image(app->burn_source_path);
     }
     app->burn_source_path[0] = '\0';
@@ -128,8 +135,10 @@ static void clear_burn_source(app_state_t *app)
 
 static int prepare_burn_source(app_state_t *app)
 {
-    if (app->queue_count == 1 && has_disc_image_ext(app->queue[0])) {
-        if (!stat_path_size(app->queue[0], &app->burn_source_size)) {
+    if (app->queue_count == 1 && has_disc_image_ext(app->queue[0]))
+    {
+        if (!stat_path_size(app->queue[0], &app->burn_source_size))
+        {
             set_status(app, "Selected image file is unavailable");
             return 0;
         }
@@ -142,7 +151,8 @@ static int prepare_burn_source(app_state_t *app)
         const char *paths[MAX_QUEUE];
         crossos_result_t rc;
 
-        for (size_t i = 0; i < app->queue_count; i++) {
+        for (size_t i = 0; i < app->queue_count; i++)
+        {
             paths[i] = app->queue[i];
         }
 
@@ -151,7 +161,8 @@ static int prepare_burn_source(app_state_t *app)
                                           app->burn_source_path,
                                           sizeof(app->burn_source_path),
                                           &app->burn_source_size);
-        if (rc != CROSSOS_OK) {
+        if (rc != CROSSOS_OK)
+        {
             set_status(app, crossos_get_error());
             return 0;
         }
@@ -165,32 +176,37 @@ static int preflight_selected_device(app_state_t *app)
 {
     const crossos_optical_device_t *dev;
 
-    if (app->device_count == 0) {
+    if (app->device_count == 0)
+    {
         set_status(app, "No optical drive available");
         clear_burn_source(app);
         return 0;
     }
 
-    if (app->selected_device >= app->device_count) {
+    if (app->selected_device >= app->device_count)
+    {
         set_status(app, "Selected optical drive is invalid");
         clear_burn_source(app);
         return 0;
     }
 
     dev = &app->devices[app->selected_device];
-    if (!dev->can_write) {
+    if (!dev->can_write)
+    {
         set_status(app, "Selected drive does not report write support");
         clear_burn_source(app);
         return 0;
     }
 
-    if (!dev->has_media) {
+    if (!dev->has_media)
+    {
         set_status(app, "Insert writable media before starting the burn");
         clear_burn_source(app);
         return 0;
     }
 
-    if (app->burn_source_size > 0 && dev->media_free_bytes > 0 && app->burn_source_size > dev->media_free_bytes) {
+    if (app->burn_source_size > 0 && dev->media_free_bytes > 0 && app->burn_source_size > dev->media_free_bytes)
+    {
         char needed[32];
         char available[32];
         char message[160];
@@ -203,7 +219,8 @@ static int preflight_selected_device(app_state_t *app)
     }
 
     if (app->burn_source_size > 0 && dev->media_free_bytes == 0 && dev->media_capacity_bytes > 0 &&
-        app->burn_source_size > dev->media_capacity_bytes) {
+        app->burn_source_size > dev->media_capacity_bytes)
+    {
         char needed[32];
         char available[32];
         char message[160];
@@ -225,10 +242,12 @@ static void sleep_ms(int ms)
 
 static int ci_cmp(const char *a, const char *b)
 {
-    while (*a && *b) {
+    while (*a && *b)
+    {
         int ca = toupper((unsigned char)*a);
         int cb = toupper((unsigned char)*b);
-        if (ca != cb) {
+        if (ca != cb)
+        {
             return ca - cb;
         }
         a++;
@@ -241,7 +260,8 @@ static int file_entry_cmp(const void *a, const void *b)
 {
     const file_entry_t *fa = (const file_entry_t *)a;
     const file_entry_t *fb = (const file_entry_t *)b;
-    if (fa->is_dir != fb->is_dir) {
+    if (fa->is_dir != fb->is_dir)
+    {
         return fb->is_dir - fa->is_dir;
     }
     return ci_cmp(fa->name, fb->name);
@@ -250,11 +270,13 @@ static int file_entry_cmp(const void *a, const void *b)
 static int dir_is_readable(const char *path)
 {
     DIR *dir;
-    if (!path || path[0] == '\0') {
+    if (!path || path[0] == '\0')
+    {
         return 0;
     }
     dir = opendir(path);
-    if (!dir) {
+    if (!dir)
+    {
         return 0;
     }
     closedir(dir);
@@ -267,27 +289,33 @@ static int get_env(struct android_app *app, JNIEnv **out_env, int *did_attach)
     JNIEnv *env;
     jint rc;
 
-    if (did_attach) {
+    if (did_attach)
+    {
         *did_attach = 0;
     }
-    if (!app || !app->activity || !app->activity->vm || !out_env) {
+    if (!app || !app->activity || !app->activity->vm || !out_env)
+    {
         return 0;
     }
 
     vm = app->activity->vm;
     env = NULL;
     rc = (*vm)->GetEnv(vm, (void **)&env, JNI_VERSION_1_6);
-    if (rc == JNI_OK) {
+    if (rc == JNI_OK)
+    {
         *out_env = env;
         return 1;
     }
-    if (rc != JNI_EDETACHED) {
+    if (rc != JNI_EDETACHED)
+    {
         return 0;
     }
-    if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK) {
+    if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK)
+    {
         return 0;
     }
-    if (did_attach) {
+    if (did_attach)
+    {
         *did_attach = 1;
     }
     *out_env = env;
@@ -296,7 +324,8 @@ static int get_env(struct android_app *app, JNIEnv **out_env, int *did_attach)
 
 static void detach_env(struct android_app *app, int did_attach)
 {
-    if (did_attach && app && app->activity && app->activity->vm) {
+    if (did_attach && app && app->activity && app->activity->vm)
+    {
         (*app->activity->vm)->DetachCurrentThread(app->activity->vm);
     }
 }
@@ -314,13 +343,15 @@ static int get_external_files_dir(struct android_app *app, char *out_path, size_
     jstring path_obj;
     const char *path_utf;
 
-    if (!get_env(app, &env, &did_attach)) {
+    if (!get_env(app, &env, &did_attach))
+    {
         return 0;
     }
 
     activity = app->activity->clazz;
     activity_class = (*env)->GetObjectClass(env, activity);
-    if (!activity_class) {
+    if (!activity_class)
+    {
         detach_env(app, did_attach);
         return 0;
     }
@@ -329,7 +360,8 @@ static int get_external_files_dir(struct android_app *app, char *out_path, size_
                                            activity_class,
                                            "getExternalFilesDir",
                                            "(Ljava/lang/String;)Ljava/io/File;");
-    if (!mid_get_external) {
+    if (!mid_get_external)
+    {
         (*env)->DeleteLocalRef(env, activity_class);
         (*env)->ExceptionClear(env);
         detach_env(app, did_attach);
@@ -338,7 +370,8 @@ static int get_external_files_dir(struct android_app *app, char *out_path, size_
 
     file_obj = (*env)->CallObjectMethod(env, activity, mid_get_external, NULL);
     (*env)->DeleteLocalRef(env, activity_class);
-    if ((*env)->ExceptionCheck(env) || !file_obj) {
+    if ((*env)->ExceptionCheck(env) || !file_obj)
+    {
         (*env)->ExceptionClear(env);
         detach_env(app, did_attach);
         return 0;
@@ -350,7 +383,8 @@ static int get_external_files_dir(struct android_app *app, char *out_path, size_
                                                 "getAbsolutePath",
                                                 "()Ljava/lang/String;");
     (*env)->DeleteLocalRef(env, file_class);
-    if (!mid_get_absolute_path) {
+    if (!mid_get_absolute_path)
+    {
         (*env)->DeleteLocalRef(env, file_obj);
         (*env)->ExceptionClear(env);
         detach_env(app, did_attach);
@@ -359,14 +393,16 @@ static int get_external_files_dir(struct android_app *app, char *out_path, size_
 
     path_obj = (jstring)(*env)->CallObjectMethod(env, file_obj, mid_get_absolute_path);
     (*env)->DeleteLocalRef(env, file_obj);
-    if ((*env)->ExceptionCheck(env) || !path_obj) {
+    if ((*env)->ExceptionCheck(env) || !path_obj)
+    {
         (*env)->ExceptionClear(env);
         detach_env(app, did_attach);
         return 0;
     }
 
     path_utf = (*env)->GetStringUTFChars(env, path_obj, NULL);
-    if (!path_utf) {
+    if (!path_utf)
+    {
         (*env)->DeleteLocalRef(env, path_obj);
         detach_env(app, did_attach);
         return 0;
@@ -388,16 +424,19 @@ static void request_filter_dialog(app_state_t *app)
     jmethodID mid_show_filter;
     jstring initial;
 
-    if (!app || !app->android_app || app->search_dialog_open) {
+    if (!app || !app->android_app || app->search_dialog_open)
+    {
         return;
     }
-    if (!get_env(app->android_app, &env, &did_attach)) {
+    if (!get_env(app->android_app, &env, &did_attach))
+    {
         return;
     }
 
     activity = app->android_app->activity->clazz;
     activity_class = (*env)->GetObjectClass(env, activity);
-    if (!activity_class) {
+    if (!activity_class)
+    {
         detach_env(app->android_app, did_attach);
         return;
     }
@@ -406,7 +445,8 @@ static void request_filter_dialog(app_state_t *app)
                                           activity_class,
                                           "showFilterInput",
                                           "(Ljava/lang/String;)V");
-    if (!mid_show_filter) {
+    if (!mid_show_filter)
+    {
         (*env)->DeleteLocalRef(env, activity_class);
         (*env)->ExceptionClear(env);
         detach_env(app->android_app, did_attach);
@@ -415,11 +455,13 @@ static void request_filter_dialog(app_state_t *app)
 
     initial = (*env)->NewStringUTF(env, app->search_buf.buf);
     (*env)->CallVoidMethod(env, activity, mid_show_filter, initial);
-    if ((*env)->ExceptionCheck(env)) {
+    if ((*env)->ExceptionCheck(env))
+    {
         (*env)->ExceptionClear(env);
     }
 
-    if (initial) {
+    if (initial)
+    {
         (*env)->DeleteLocalRef(env, initial);
     }
     (*env)->DeleteLocalRef(env, activity_class);
@@ -435,16 +477,19 @@ static void request_file_picker(app_state_t *app)
     jclass activity_class;
     jmethodID mid_show_picker;
 
-    if (!app || !app->android_app || app->ui_input.drop_count > 0 || app->queue_count >= MAX_QUEUE) {
+    if (!app || !app->android_app || app->ui_input.drop_count > 0 || app->queue_count >= MAX_QUEUE)
+    {
         return;
     }
-    if (!get_env(app->android_app, &env, &did_attach)) {
+    if (!get_env(app->android_app, &env, &did_attach))
+    {
         return;
     }
 
     activity = app->android_app->activity->clazz;
     activity_class = (*env)->GetObjectClass(env, activity);
-    if (!activity_class) {
+    if (!activity_class)
+    {
         detach_env(app->android_app, did_attach);
         return;
     }
@@ -453,7 +498,8 @@ static void request_file_picker(app_state_t *app)
                                           activity_class,
                                           "showFilePicker",
                                           "()V");
-    if (!mid_show_picker) {
+    if (!mid_show_picker)
+    {
         (*env)->DeleteLocalRef(env, activity_class);
         (*env)->ExceptionClear(env);
         detach_env(app->android_app, did_attach);
@@ -461,7 +507,8 @@ static void request_file_picker(app_state_t *app)
     }
 
     (*env)->CallVoidMethod(env, activity, mid_show_picker);
-    if ((*env)->ExceptionCheck(env)) {
+    if ((*env)->ExceptionCheck(env))
+    {
         (*env)->ExceptionClear(env);
     }
 
@@ -471,23 +518,26 @@ static void request_file_picker(app_state_t *app)
 
 JNIEXPORT void JNICALL
 Java_io_crossos_hello_CrossOSNativeActivity_nativeSetFilterText(JNIEnv *env,
-                                                                 jclass clazz,
-                                                                 jstring text)
+                                                                jclass clazz,
+                                                                jstring text)
 {
     const char *utf = NULL;
     (void)clazz;
 
-    if (!g_active_app) {
+    if (!g_active_app)
+    {
         return;
     }
 
-    if (!text) {
+    if (!text)
+    {
         g_active_app->search_dialog_open = 0;
         return;
     }
 
     utf = (*env)->GetStringUTFChars(env, text, NULL);
-    if (!utf) {
+    if (!utf)
+    {
         g_active_app->search_dialog_open = 0;
         return;
     }
@@ -507,38 +557,45 @@ Java_io_crossos_hello_CrossOSNativeActivity_nativeSetPickedFiles(JNIEnv *env,
     jsize count;
     (void)clazz;
 
-    if (!g_active_app) {
+    if (!g_active_app)
+    {
         return;
     }
 
     g_pending_pick_count = 0;
 
-    if (!paths) {
+    if (!paths)
+    {
         g_pending_pick_set = 1;
         return;
     }
 
     count = (*env)->GetArrayLength(env, paths);
-    if (count < 0) {
+    if (count < 0)
+    {
         g_pending_pick_set = 1;
         return;
     }
 
-    for (jsize i = 0; i < count && i < MAX_QUEUE; i++) {
+    for (jsize i = 0; i < count && i < MAX_QUEUE; i++)
+    {
         jstring item = (jstring)(*env)->GetObjectArrayElement(env, paths, i);
         const char *utf;
-        if (!item) {
+        if (!item)
+        {
             continue;
         }
         utf = (*env)->GetStringUTFChars(env, item, NULL);
-        if (utf && utf[0] != '\0') {
+        if (utf && utf[0] != '\0')
+        {
             snprintf(g_pending_pick_paths[g_pending_pick_count],
                      sizeof(g_pending_pick_paths[g_pending_pick_count]),
                      "%s",
                      utf);
             g_pending_pick_count++;
         }
-        if (utf) {
+        if (utf)
+        {
             (*env)->ReleaseStringUTFChars(env, item, utf);
         }
         (*env)->DeleteLocalRef(env, item);
@@ -558,13 +615,16 @@ static void init_start_directory(struct android_app *android_app, app_state_t *a
     candidates[candidate_count++] = "/sdcard/Download";
     candidates[candidate_count++] = "/storage/emulated/0";
     candidates[candidate_count++] = "/sdcard";
-    if (get_external_files_dir(android_app, external_dir, sizeof(external_dir))) {
+    if (get_external_files_dir(android_app, external_dir, sizeof(external_dir)))
+    {
         candidates[candidate_count++] = external_dir;
     }
     candidates[candidate_count++] = "/";
 
-    for (size_t i = 0; i < candidate_count; i++) {
-        if (dir_is_readable(candidates[i])) {
+    for (size_t i = 0; i < candidate_count; i++)
+    {
+        if (dir_is_readable(candidates[i]))
+        {
             snprintf(app->cwd, sizeof(app->cwd), "%s", candidates[i]);
             return;
         }
@@ -573,44 +633,88 @@ static void init_start_directory(struct android_app *android_app, app_state_t *a
     snprintf(app->cwd, sizeof(app->cwd), "/");
 }
 
+static int choose_accessible_directory(app_state_t *app)
+{
+    char external_dir[1024];
+    const char *candidates[6];
+    size_t candidate_count = 0;
+
+    if (!app || !app->android_app)
+    {
+        return 0;
+    }
+
+    external_dir[0] = '\0';
+    candidates[candidate_count++] = "/storage/emulated/0/Download";
+    candidates[candidate_count++] = "/sdcard/Download";
+    candidates[candidate_count++] = "/storage/emulated/0";
+    candidates[candidate_count++] = "/sdcard";
+    if (get_external_files_dir(app->android_app, external_dir, sizeof(external_dir)))
+    {
+        candidates[candidate_count++] = external_dir;
+    }
+    candidates[candidate_count++] = "/";
+
+    for (size_t i = 0; i < candidate_count; i++)
+    {
+        if (dir_is_readable(candidates[i]))
+        {
+            snprintf(app->cwd, sizeof(app->cwd), "%s", candidates[i]);
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 static void refresh_files(app_state_t *app)
 {
     int keep_selected = 0;
     char selected_path[1024];
+    int include_parent;
 
-    if (app->file_count > 0 && app->selected_index < app->file_count) {
+    if (app->file_count > 0 && app->selected_index < app->file_count)
+    {
         snprintf(selected_path, sizeof(selected_path), "%s", app->files[app->selected_index].path);
         keep_selected = 1;
     }
 
     app->file_count = 0;
     app->selected_index = 0;
+    include_parent = (strcmp(app->cwd, "/") != 0) ? 1 : 0;
 
     DIR *dir = opendir(app->cwd);
-    if (!dir) {
+    if (!dir)
+    {
         set_status(app, "Cannot open folder");
         return;
     }
 
     struct dirent *de;
-    while ((de = readdir(dir)) != NULL && app->file_count < MAX_FILES) {
+    while ((de = readdir(dir)) != NULL && app->file_count < (size_t)(MAX_FILES - include_parent))
+    {
         file_entry_t *entry;
         struct stat st;
 
-        if (strcmp(de->d_name, ".") == 0) {
+        if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0)
+        {
             continue;
         }
 
         entry = &app->files[app->file_count];
         memset(entry, 0, sizeof(*entry));
         snprintf(entry->name, sizeof(entry->name), "%s", de->d_name);
-        if (strcmp(app->cwd, "/") == 0) {
+        if (strcmp(app->cwd, "/") == 0)
+        {
             snprintf(entry->path, sizeof(entry->path), "/%s", de->d_name);
-        } else {
+        }
+        else
+        {
             snprintf(entry->path, sizeof(entry->path), "%s/%s", app->cwd, de->d_name);
         }
 
-        if (stat(entry->path, &st) == 0) {
+        if (stat(entry->path, &st) == 0)
+        {
             entry->is_dir = S_ISDIR(st.st_mode) ? 1 : 0;
             entry->size = (uint64_t)st.st_size;
         }
@@ -621,9 +725,25 @@ static void refresh_files(app_state_t *app)
     closedir(dir);
     qsort(app->files, app->file_count, sizeof(app->files[0]), file_entry_cmp);
 
-    if (keep_selected) {
-        for (size_t i = 0; i < app->file_count; i++) {
-            if (strcmp(app->files[i].path, selected_path) == 0) {
+    if (include_parent && app->file_count < MAX_FILES)
+    {
+        if (app->file_count > 0)
+        {
+            memmove(&app->files[1], &app->files[0], app->file_count * sizeof(app->files[0]));
+        }
+        memset(&app->files[0], 0, sizeof(app->files[0]));
+        snprintf(app->files[0].name, sizeof(app->files[0].name), "..");
+        snprintf(app->files[0].path, sizeof(app->files[0].path), "%s", app->cwd);
+        app->files[0].is_dir = 1;
+        app->file_count++;
+    }
+
+    if (keep_selected)
+    {
+        for (size_t i = 0; i < app->file_count; i++)
+        {
+            if (strcmp(app->files[i].path, selected_path) == 0)
+            {
                 app->selected_index = i;
                 break;
             }
@@ -633,10 +753,12 @@ static void refresh_files(app_state_t *app)
 
 static void queue_remove_at(app_state_t *app, size_t index)
 {
-    if (index >= app->queue_count) {
+    if (index >= app->queue_count)
+    {
         return;
     }
-    for (size_t i = index; i + 1 < app->queue_count; i++) {
+    for (size_t i = index; i + 1 < app->queue_count; i++)
+    {
         snprintf(app->queue[i], sizeof(app->queue[i]), "%s", app->queue[i + 1]);
     }
     app->queue_count--;
@@ -646,14 +768,16 @@ static void refresh_devices(app_state_t *app)
 {
     size_t count = 0;
     crossos_result_t rc = crossos_optical_list_devices(app->devices, MAX_DEVICES, &count);
-    if (rc != CROSSOS_OK) {
+    if (rc != CROSSOS_OK)
+    {
         app->device_count = 0;
         set_status(app, "Device scan failed");
         return;
     }
 
     app->device_count = count;
-    if (app->selected_device >= app->device_count && app->device_count > 0) {
+    if (app->selected_device >= app->device_count && app->device_count > 0)
+    {
         app->selected_device = 0;
     }
 }
@@ -662,14 +786,22 @@ static void add_selected_to_queue(app_state_t *app)
 {
     const file_entry_t *entry;
 
-    if (app->file_count == 0 || app->queue_count >= MAX_QUEUE) {
+    if (app->file_count == 0 || app->queue_count >= MAX_QUEUE)
+    {
         set_status(app, "Queue full or empty folder");
         return;
     }
 
     entry = &app->files[app->selected_index];
-    for (size_t i = 0; i < app->queue_count; i++) {
-        if (strcmp(app->queue[i], entry->path) == 0) {
+    if (entry->is_dir)
+    {
+        set_status(app, "Select a file to add");
+        return;
+    }
+    for (size_t i = 0; i < app->queue_count; i++)
+    {
+        if (strcmp(app->queue[i], entry->path) == 0)
+        {
             set_status(app, "Already in queue");
             return;
         }
@@ -682,17 +814,21 @@ static void add_selected_to_queue(app_state_t *app)
 
 static void add_path_to_queue(app_state_t *app, const char *path)
 {
-    if (!path || path[0] == '\0') {
+    if (!path || path[0] == '\0')
+    {
         return;
     }
 
-    if (app->queue_count >= MAX_QUEUE) {
+    if (app->queue_count >= MAX_QUEUE)
+    {
         set_status(app, "Queue full");
         return;
     }
 
-    for (size_t i = 0; i < app->queue_count; i++) {
-        if (strcmp(app->queue[i], path) == 0) {
+    for (size_t i = 0; i < app->queue_count; i++)
+    {
+        if (strcmp(app->queue[i], path) == 0)
+        {
             return;
         }
     }
@@ -703,11 +839,13 @@ static void add_path_to_queue(app_state_t *app, const char *path)
 
 static void pick_files_to_queue(app_state_t *app)
 {
-    if (!app) {
+    if (!app)
+    {
         return;
     }
 
-    if (app->queue_count >= MAX_QUEUE) {
+    if (app->queue_count >= MAX_QUEUE)
+    {
         set_status(app, "Queue full");
         return;
     }
@@ -720,38 +858,53 @@ static void go_parent(app_state_t *app)
 {
     char candidate[1024];
     size_t len = strlen(app->cwd);
-    if (len == 0) {
+    if (len == 0)
+    {
         return;
     }
 
     snprintf(candidate, sizeof(candidate), "%s", app->cwd);
 
-    while (len > 1 && candidate[len - 1] == '/') {
+    while (len > 1 && candidate[len - 1] == '/')
+    {
         candidate[--len] = '\0';
     }
 
-    while (len > 1) {
-        while (len > 1 && candidate[len - 1] != '/') {
+    while (len > 1)
+    {
+        while (len > 1 && candidate[len - 1] != '/')
+        {
             candidate[--len] = '\0';
         }
-        if (len > 1) {
+        if (len > 1)
+        {
             candidate[len - 1] = '\0';
             len = strlen(candidate);
         }
-        if (candidate[0] == '\0') {
+        if (candidate[0] == '\0')
+        {
             snprintf(candidate, sizeof(candidate), "/");
             len = 1;
         }
 
-        if (dir_is_readable(candidate)) {
+        if (dir_is_readable(candidate))
+        {
             snprintf(app->cwd, sizeof(app->cwd), "%s", candidate);
             refresh_files(app);
             return;
         }
 
-        if (strcmp(candidate, "/") == 0) {
+        if (strcmp(candidate, "/") == 0)
+        {
             break;
         }
+    }
+
+    if (choose_accessible_directory(app))
+    {
+        refresh_files(app);
+        set_status(app, "Switched to accessible storage root");
+        return;
     }
 
     set_status(app, "Cannot access parent folder from this location");
@@ -761,20 +914,24 @@ static void open_selected(app_state_t *app)
 {
     const file_entry_t *entry;
 
-    if (app->file_count == 0) {
+    if (app->file_count == 0)
+    {
         return;
     }
 
     entry = &app->files[app->selected_index];
-    if (!entry->is_dir) {
+    if (!entry->is_dir)
+    {
         return;
     }
-    if (strcmp(entry->name, "..") == 0) {
+    if (strcmp(entry->name, "..") == 0)
+    {
         go_parent(app);
         return;
     }
 
-    if (!dir_is_readable(entry->path)) {
+    if (!dir_is_readable(entry->path))
+    {
         set_status(app, "Cannot open selected folder");
         return;
     }
@@ -794,27 +951,32 @@ static void start_burn(app_state_t *app)
     const char *dev;
     crossos_result_t rc;
 
-    if (app->burn_job) {
+    if (app->burn_job)
+    {
         set_status(app, "Burn already running");
         return;
     }
-    if (app->queue_count == 0) {
+    if (app->queue_count == 0)
+    {
         set_status(app, "Queue is empty");
         return;
     }
 
     clear_burn_source(app);
-    if (!prepare_burn_source(app)) {
+    if (!prepare_burn_source(app))
+    {
         return;
     }
-    if (!preflight_selected_device(app)) {
+    if (!preflight_selected_device(app))
+    {
         return;
     }
 
     paths[0] = app->burn_source_path;
     dev = app->devices[app->selected_device].id;
     rc = crossos_optical_burn_start(paths, 1, dev, &app->burn_job);
-    if (rc != CROSSOS_OK) {
+    if (rc != CROSSOS_OK)
+    {
         clear_burn_source(app);
         set_status(app, crossos_get_error());
         return;
@@ -826,25 +988,35 @@ static void start_burn(app_state_t *app)
 
 static void update_burn(app_state_t *app)
 {
-    if (!app->burn_job) {
+    if (!app->burn_job)
+    {
         return;
     }
 
-    if (crossos_optical_burn_poll(app->burn_job, &app->burn) != CROSSOS_OK) {
+    if (crossos_optical_burn_poll(app->burn_job, &app->burn) != CROSSOS_OK)
+    {
         set_status(app, crossos_get_error());
         return;
     }
 
     if (app->burn.state == CROSSOS_OPTICAL_BURN_DONE ||
         app->burn.state == CROSSOS_OPTICAL_BURN_FAILED ||
-        app->burn.state == CROSSOS_OPTICAL_BURN_CANCELED) {
-        if (app->burn.message[0] != '\0') {
+        app->burn.state == CROSSOS_OPTICAL_BURN_CANCELED)
+    {
+        if (app->burn.message[0] != '\0')
+        {
             set_status(app, app->burn.message);
-        } else if (app->burn.state == CROSSOS_OPTICAL_BURN_DONE) {
+        }
+        else if (app->burn.state == CROSSOS_OPTICAL_BURN_DONE)
+        {
             set_status(app, "Burn completed");
-        } else if (app->burn.state == CROSSOS_OPTICAL_BURN_CANCELED) {
+        }
+        else if (app->burn.state == CROSSOS_OPTICAL_BURN_CANCELED)
+        {
             set_status(app, "Burn canceled");
-        } else {
+        }
+        else
+        {
             set_status(app, "Burn failed");
         }
         crossos_optical_burn_free(app->burn_job);
@@ -855,15 +1027,24 @@ static void update_burn(app_state_t *app)
 
 static const char *burn_state_name(crossos_optical_burn_state_t state)
 {
-    switch (state) {
-    case CROSSOS_OPTICAL_BURN_IDLE: return "IDLE";
-    case CROSSOS_OPTICAL_BURN_PREPARING: return "PREPARING";
-    case CROSSOS_OPTICAL_BURN_BURNING: return "BURNING";
-    case CROSSOS_OPTICAL_BURN_FINALIZING: return "FINALIZING";
-    case CROSSOS_OPTICAL_BURN_DONE: return "DONE";
-    case CROSSOS_OPTICAL_BURN_FAILED: return "FAILED";
-    case CROSSOS_OPTICAL_BURN_CANCELED: return "CANCELED";
-    default: return "UNKNOWN";
+    switch (state)
+    {
+    case CROSSOS_OPTICAL_BURN_IDLE:
+        return "IDLE";
+    case CROSSOS_OPTICAL_BURN_PREPARING:
+        return "PREPARING";
+    case CROSSOS_OPTICAL_BURN_BURNING:
+        return "BURNING";
+    case CROSSOS_OPTICAL_BURN_FINALIZING:
+        return "FINALIZING";
+    case CROSSOS_OPTICAL_BURN_DONE:
+        return "DONE";
+    case CROSSOS_OPTICAL_BURN_FAILED:
+        return "FAILED";
+    case CROSSOS_OPTICAL_BURN_CANCELED:
+        return "CANCELED";
+    default:
+        return "UNKNOWN";
     }
 }
 
@@ -909,7 +1090,8 @@ static void render(app_state_t *app)
     const char *filter;
     int search_focused;
 
-    if (!app->surface || crossos_surface_lock(app->surface, &fb) != CROSSOS_OK) {
+    if (!app->surface || crossos_surface_lock(app->surface, &fb) != CROSSOS_OK)
+    {
         return;
     }
 
@@ -940,7 +1122,8 @@ static void render(app_state_t *app)
     snprintf(hdr, sizeof(hdr), "%zu file(s) queued  |  %.48s", app->queue_count, app->cwd);
     crossos_ui_label(&ui, pad + 4 * scale, pad + 18 * scale, hdr, ui.theme.text_dim);
 
-    if (app->burn_job) {
+    if (app->burn_job)
+    {
         crossos_ui_spinner(&ui, width - pad - 8 * scale, pad + 10 * scale, 8 * scale);
     }
 
@@ -958,32 +1141,40 @@ static void render(app_state_t *app)
                                            search_h,
                                            &app->search_buf,
                                            "Filter files...");
-    if (search_focused && !app->search_focus_prev && !app->search_dialog_open) {
+    if (search_focused && !app->search_focus_prev && !app->search_dialog_open)
+    {
         request_filter_dialog(app);
     }
     app->search_focus_prev = search_focused;
 
     filter = app->search_buf.buf;
-    for (size_t fi = 0; fi < app->file_count; fi++) {
-        if (filter[0] == '\0') {
+    for (size_t fi = 0; fi < app->file_count; fi++)
+    {
+        if (filter[0] == '\0')
+        {
             visible[vis_count++] = (int)fi;
             continue;
         }
         const char *name = app->files[fi].name;
         int found = 0;
-        for (const char *p = name; *p && !found; p++) {
+        for (const char *p = name; *p && !found; p++)
+        {
             int match = 1;
-            for (int k = 0; filter[k]; k++) {
-                if (!*(p + k) || toupper((unsigned char)*(p + k)) != toupper((unsigned char)filter[k])) {
+            for (int k = 0; filter[k]; k++)
+            {
+                if (!*(p + k) || toupper((unsigned char)*(p + k)) != toupper((unsigned char)filter[k]))
+                {
                     match = 0;
                     break;
                 }
             }
-            if (match) {
+            if (match)
+            {
                 found = 1;
             }
         }
-        if (found) {
+        if (found)
+        {
             visible[vis_count++] = (int)fi;
         }
     }
@@ -995,25 +1186,32 @@ static void render(app_state_t *app)
         crossos_ui_scroll_begin(&ui, left_x, list_y, left_w, list_h, &app->file_scroll,
                                 content_h > list_h ? content_h : list_h);
         scroll_off = (int)app->file_scroll.offset;
-        for (int vi = 0; vi < vis_count; vi++) {
+        for (int vi = 0; vi < vis_count; vi++)
+        {
             int fi = visible[vi];
             const file_entry_t *entry = &app->files[fi];
             int row_y = list_y + vi * row_h - scroll_off;
-            if (row_y + row_h < list_y || row_y > list_y + list_h) {
+            if (row_y + row_h < list_y || row_y > list_y + list_h)
+            {
                 continue;
             }
             snprintf(line, sizeof(line), "%s  %.40s", entry->is_dir ? "/" : " ", entry->name);
             if (crossos_ui_selectable(&ui, left_x, row_y, left_w - 10 * scale, row_h - 1,
-                                      line, (size_t)fi == app->selected_index)) {
+                                      line, (size_t)fi == app->selected_index))
+            {
                 app->selected_index = (size_t)fi;
-                if (entry->is_dir) {
+                if (entry->is_dir)
+                {
                     open_selected(app);
-                } else {
+                }
+                else
+                {
                     add_selected_to_queue(app);
                 }
             }
         }
-        if (vis_count == 0) {
+        if (vis_count == 0)
+        {
             crossos_ui_label_centered(&ui, left_x, list_y, left_w, list_h,
                                       filter[0] ? "No matches" : "Empty folder",
                                       ui.theme.text_dim);
@@ -1028,7 +1226,8 @@ static void render(app_state_t *app)
     drop_y = body_y + q_scroll_h + 4 * scale;
 
     if (crossos_ui_drop_zone(&ui, right_x, drop_y, right_w, drop_h,
-                             "Drop files here or tap to browse", app->dragging_over)) {
+                             "Drop files here or tap to browse", app->dragging_over))
+    {
         pick_files_to_queue(app);
     }
 
@@ -1038,21 +1237,25 @@ static void render(app_state_t *app)
                             &app->queue_scroll, q_cont_h > q_scroll_h ? q_cont_h : q_scroll_h);
     {
         int q_off = (int)app->queue_scroll.offset;
-        for (size_t qi = 0; qi < app->queue_count; qi++) {
+        for (size_t qi = 0; qi < app->queue_count; qi++)
+        {
             int row_y = q_scroll_y + (int)qi * q_row_h - q_off;
             const char *base;
-            if (row_y + q_row_h < q_scroll_y || row_y > q_scroll_y + q_scroll_h) {
+            if (row_y + q_row_h < q_scroll_y || row_y > q_scroll_y + q_scroll_h)
+            {
                 continue;
             }
             base = strrchr(app->queue[qi], '/');
             base = base ? base + 1 : app->queue[qi];
             snprintf(line, sizeof(line), "%02zu  %s", qi + 1, base);
-            if (crossos_ui_selectable(&ui, right_x, row_y, right_w - 10 * scale, q_row_h - 1, line, 0)) {
+            if (crossos_ui_selectable(&ui, right_x, row_y, right_w - 10 * scale, q_row_h - 1, line, 0))
+            {
                 queue_remove_at(app, qi);
                 set_status(app, "Removed from queue");
             }
         }
-        if (app->queue_count == 0) {
+        if (app->queue_count == 0)
+        {
             crossos_ui_label_centered(&ui, right_x, q_scroll_y, right_w, q_scroll_h,
                                       "Queue is empty - add files from browser or picker",
                                       ui.theme.text_dim);
@@ -1068,23 +1271,30 @@ static void render(app_state_t *app)
     dev_y = footer_y + 6 * scale;
     dev_w = 200 * scale;
 
-    if (crossos_ui_dropdown_header(&ui, dev_x, dev_y, dev_w, 16 * scale, "Drive", app->show_device_dropdown)) {
+    if (crossos_ui_dropdown_header(&ui, dev_x, dev_y, dev_w, 16 * scale, "Drive", app->show_device_dropdown))
+    {
         app->show_device_dropdown = !app->show_device_dropdown;
     }
-    if (app->show_device_dropdown) {
-        for (size_t di = 0; di < app->device_count && di < 4; di++) {
+    if (app->show_device_dropdown)
+    {
+        for (size_t di = 0; di < app->device_count && di < 4; di++)
+        {
             int item_y = dev_y + 18 * scale + (int)di * 15 * scale;
             snprintf(line, sizeof(line), "%.36s", app->devices[di].label);
             if (crossos_ui_selectable(&ui, dev_x, item_y, dev_w, 14 * scale,
-                                      line, di == app->selected_device)) {
+                                      line, di == app->selected_device))
+            {
                 app->selected_device = di;
                 app->show_device_dropdown = 0;
             }
         }
-        if (app->device_count == 0) {
+        if (app->device_count == 0)
+        {
             crossos_ui_label(&ui, dev_x + 4, dev_y + 18 * scale, "No optical drive found", ui.theme.text_dim);
         }
-    } else {
+    }
+    else
+    {
         snprintf(line, sizeof(line), "%.36s",
                  app->device_count > 0 ? app->devices[app->selected_device].label : "No drive found");
         crossos_ui_label(&ui, dev_x, dev_y + 18 * scale, line, ui.theme.text_dim);
@@ -1106,44 +1316,59 @@ static void render(app_state_t *app)
 
         crossos_ui_layout_begin_row(&row, pad, btn_y, width - pad * 2, btn_h, 6 * scale);
 
-        if (crossos_ui_layout_row_next(&row, 58 * scale, &rect)) {
+        if (crossos_ui_layout_row_next(&row, 58 * scale, &rect))
+        {
             if (crossos_ui_button(&ui, rect.x, rect.y, rect.width, rect.height, "Open",
-                                  app->file_count > 0 && app->files[app->selected_index].is_dir)) {
+                                  app->file_count > 0 && app->files[app->selected_index].is_dir))
+            {
                 open_selected(app);
             }
         }
-        if (crossos_ui_layout_row_next(&row, 48 * scale, &rect)) {
-            if (crossos_ui_button(&ui, rect.x, rect.y, rect.width, rect.height, "Add", app->file_count > 0)) {
+        if (crossos_ui_layout_row_next(&row, 48 * scale, &rect))
+        {
+            if (crossos_ui_button(&ui, rect.x, rect.y, rect.width, rect.height, "Add", app->file_count > 0))
+            {
                 add_selected_to_queue(app);
             }
         }
-        if (crossos_ui_layout_row_next(&row, 48 * scale, &rect)) {
-            if (crossos_ui_button_ghost(&ui, rect.x, rect.y, rect.width, rect.height, "Pick", 1)) {
+        if (crossos_ui_layout_row_next(&row, 48 * scale, &rect))
+        {
+            if (crossos_ui_button_ghost(&ui, rect.x, rect.y, rect.width, rect.height, "Pick", 1))
+            {
                 pick_files_to_queue(app);
             }
         }
-        if (crossos_ui_layout_row_next(&row, 40 * scale, &rect)) {
-            if (crossos_ui_button_ghost(&ui, rect.x, rect.y, rect.width, rect.height, "Up", 1)) {
+        if (crossos_ui_layout_row_next(&row, 40 * scale, &rect))
+        {
+            if (crossos_ui_button_ghost(&ui, rect.x, rect.y, rect.width, rect.height, "Up", 1))
+            {
                 go_parent(app);
             }
         }
-        if (crossos_ui_layout_row_next(&row, 66 * scale, &rect)) {
-            if (crossos_ui_button_ghost(&ui, rect.x, rect.y, rect.width, rect.height, "Refresh", 1)) {
+        if (crossos_ui_layout_row_next(&row, 66 * scale, &rect))
+        {
+            if (crossos_ui_button_ghost(&ui, rect.x, rect.y, rect.width, rect.height, "Refresh", 1))
+            {
                 refresh_files(app);
                 refresh_devices(app);
                 set_status(app, "Refreshed");
             }
         }
-        if (crossos_ui_layout_row_next(&row, 60 * scale, &rect)) {
+        if (crossos_ui_layout_row_next(&row, 60 * scale, &rect))
+        {
             if (crossos_ui_button(&ui, rect.x, rect.y, rect.width, rect.height, "Burn",
-                                  app->queue_count > 0 && !app->burn_job)) {
+                                  app->queue_count > 0 && !app->burn_job))
+            {
                 start_burn(app);
             }
         }
-        if (crossos_ui_layout_row_next(&row, 66 * scale, &rect)) {
+        if (crossos_ui_layout_row_next(&row, 66 * scale, &rect))
+        {
             if (crossos_ui_button_danger(&ui, rect.x, rect.y, rect.width, rect.height, "Cancel",
-                                         app->burn_job != NULL)) {
-                if (app->burn_job) {
+                                         app->burn_job != NULL))
+            {
+                if (app->burn_job)
+                {
                     crossos_optical_burn_cancel(app->burn_job);
                     set_status(app, "Cancel requested");
                 }
@@ -1159,75 +1384,115 @@ static void render(app_state_t *app)
 
 static void handle_event(app_state_t *app, const crossos_event_t *ev)
 {
-    if (ev->type == CROSSOS_EVENT_QUIT || ev->type == CROSSOS_EVENT_WINDOW_CLOSE) {
+    if (ev->type == CROSSOS_EVENT_QUIT || ev->type == CROSSOS_EVENT_WINDOW_CLOSE)
+    {
         app->running = 0;
         crossos_quit();
         return;
     }
 
-    if (ev->type == CROSSOS_EVENT_KEY_DOWN) {
+    if (ev->type == CROSSOS_EVENT_KEY_DOWN)
+    {
         int key = ev->key.keycode;
         app->ui_input.key_pressed = key;
         app->ui_input.key_mods = (int)ev->key.mods;
-        if (app->search_buf.focused) {
+        if (app->search_buf.focused)
+        {
             return;
         }
-        if (key == CROSSOS_KEY_ESCAPE) {
+        if (key == CROSSOS_KEY_ESCAPE)
+        {
             app->running = 0;
             crossos_quit();
-        } else if (key == CROSSOS_KEY_UP) {
-            if (app->selected_index > 0) {
+        }
+        else if (key == CROSSOS_KEY_UP)
+        {
+            if (app->selected_index > 0)
+            {
                 app->selected_index--;
             }
-        } else if (key == CROSSOS_KEY_DOWN) {
-            if (app->selected_index + 1 < app->file_count) {
+        }
+        else if (key == CROSSOS_KEY_DOWN)
+        {
+            if (app->selected_index + 1 < app->file_count)
+            {
                 app->selected_index++;
             }
-        } else if (key == CROSSOS_KEY_ENTER) {
+        }
+        else if (key == CROSSOS_KEY_ENTER)
+        {
             open_selected(app);
-        } else if (key == CROSSOS_KEY_SPACE) {
+        }
+        else if (key == CROSSOS_KEY_SPACE)
+        {
             add_selected_to_queue(app);
-        } else if (key == CROSSOS_KEY_BACKSPACE) {
+        }
+        else if (key == CROSSOS_KEY_BACKSPACE)
+        {
             go_parent(app);
-        } else if (key == CROSSOS_KEY_TAB) {
-            if (app->device_count > 0) {
+        }
+        else if (key == CROSSOS_KEY_TAB)
+        {
+            if (app->device_count > 0)
+            {
                 app->selected_device = (app->selected_device + 1) % app->device_count;
             }
-        } else if (key == CROSSOS_KEY_B) {
+        }
+        else if (key == CROSSOS_KEY_B)
+        {
             start_burn(app);
-        } else if (key == CROSSOS_KEY_C) {
-            if (app->burn_job) {
+        }
+        else if (key == CROSSOS_KEY_C)
+        {
+            if (app->burn_job)
+            {
                 crossos_optical_burn_cancel(app->burn_job);
                 set_status(app, "Cancel requested");
             }
-        } else if (key == CROSSOS_KEY_R) {
+        }
+        else if (key == CROSSOS_KEY_R)
+        {
             refresh_files(app);
             refresh_devices(app);
             set_status(app, "Refreshed");
         }
-    } else if (ev->type == CROSSOS_EVENT_POINTER_MOVE) {
+    }
+    else if (ev->type == CROSSOS_EVENT_POINTER_MOVE)
+    {
         app->ui_input.pointer_x = (int)ev->pointer.x;
         app->ui_input.pointer_y = (int)ev->pointer.y;
-    } else if (ev->type == CROSSOS_EVENT_POINTER_DOWN) {
+    }
+    else if (ev->type == CROSSOS_EVENT_POINTER_DOWN)
+    {
         app->ui_input.pointer_x = (int)ev->pointer.x;
         app->ui_input.pointer_y = (int)ev->pointer.y;
         app->ui_input.pointer_down = 1;
         app->ui_input.pointer_pressed = 1;
-    } else if (ev->type == CROSSOS_EVENT_POINTER_UP) {
+    }
+    else if (ev->type == CROSSOS_EVENT_POINTER_UP)
+    {
         app->ui_input.pointer_x = (int)ev->pointer.x;
         app->ui_input.pointer_y = (int)ev->pointer.y;
         app->ui_input.pointer_down = 0;
         app->ui_input.pointer_released = 1;
-    } else if (ev->type == CROSSOS_EVENT_POINTER_SCROLL) {
+    }
+    else if (ev->type == CROSSOS_EVENT_POINTER_SCROLL)
+    {
         app->ui_input.scroll_dy += ev->pointer.scroll_y;
         app->ui_input.scroll_dx += ev->pointer.scroll_x;
-    } else if (ev->type == CROSSOS_EVENT_CHAR) {
+    }
+    else if (ev->type == CROSSOS_EVENT_CHAR)
+    {
         app->ui_input.char_input = ev->character.codepoint;
-    } else if (ev->type == CROSSOS_EVENT_DROP_FILES) {
-        for (int i = 0; i < ev->drop.count; i++) {
+    }
+    else if (ev->type == CROSSOS_EVENT_DROP_FILES)
+    {
+        for (int i = 0; i < ev->drop.count; i++)
+        {
             add_path_to_queue(app, ev->drop.paths[i]);
         }
-        if (ev->drop.count > 0) {
+        if (ev->drop.count > 0)
+        {
             char msg[64];
             snprintf(msg, sizeof(msg), "Dropped %d file(s)", ev->drop.count);
             set_status(app, msg);
@@ -1250,15 +1515,19 @@ static void reset_frame_input(app_state_t *app)
 
 static int wait_for_native_window(struct android_app *app)
 {
-    while (!app->window) {
+    while (!app->window)
+    {
         int events;
         struct android_poll_source *source = NULL;
-        if (ALooper_pollAll(-1, NULL, &events, (void **)&source) >= 0) {
-            if (source) {
+        if (ALooper_pollAll(-1, NULL, &events, (void **)&source) >= 0)
+        {
+            if (source)
+            {
                 source->process(app, source);
             }
         }
-        if (app->destroyRequested) {
+        if (app->destroyRequested)
+        {
             LOGE("destroy requested before native window became available");
             return 0;
         }
@@ -1271,10 +1540,12 @@ void android_main(struct android_app *android_app)
     app_state_t app;
 
     crossos_android_set_app(android_app);
-    if (!wait_for_native_window(android_app)) {
+    if (!wait_for_native_window(android_app))
+    {
         return;
     }
-    if (crossos_init() != CROSSOS_OK) {
+    if (crossos_init() != CROSSOS_OK)
+    {
         LOGE("crossos_init failed: %s", crossos_get_error());
         return;
     }
@@ -1287,7 +1558,8 @@ void android_main(struct android_app *android_app)
     g_active_app = &app;
 
     app.window = crossos_window_create("CrossOS Disc Burner", 0, 0, 0);
-    if (!app.window) {
+    if (!app.window)
+    {
         LOGE("crossos_window_create failed: %s", crossos_get_error());
         crossos_shutdown();
         return;
@@ -1300,9 +1572,11 @@ void android_main(struct android_app *android_app)
     refresh_devices(&app);
     set_status(&app, "Ready. Browse storage, queue files, then start burn.");
 
-    while (app.running) {
+    while (app.running)
+    {
         crossos_event_t ev;
-        if (g_pending_filter_set) {
+        if (g_pending_filter_set)
+        {
             g_pending_filter_set = 0;
             snprintf(app.search_buf.buf, sizeof(app.search_buf.buf), "%s", g_pending_filter);
             app.search_buf.len = (int)strlen(app.search_buf.buf);
@@ -1310,13 +1584,17 @@ void android_main(struct android_app *android_app)
             app.search_buf.focused = 0;
             app.search_focus_prev = 0;
         }
-        while (crossos_poll_event(&ev)) {
+        while (crossos_poll_event(&ev))
+        {
             handle_event(&app, &ev);
         }
-        if (g_pending_pick_set) {
+        if (g_pending_pick_set)
+        {
             g_pending_pick_set = 0;
-            if (g_pending_pick_count > 0) {
-                for (int i = 0; i < g_pending_pick_count; i++) {
+            if (g_pending_pick_count > 0)
+            {
+                for (int i = 0; i < g_pending_pick_count; i++)
+                {
                     add_path_to_queue(&app, g_pending_pick_paths[i]);
                 }
                 {
@@ -1324,12 +1602,15 @@ void android_main(struct android_app *android_app)
                     snprintf(msg, sizeof(msg), "Added %d file(s) from Android picker", g_pending_pick_count);
                     set_status(&app, msg);
                 }
-            } else {
+            }
+            else
+            {
                 set_status(&app, "No files selected");
             }
             g_pending_pick_count = 0;
         }
-        if (crossos_android_poll_usb_changed()) {
+        if (crossos_android_poll_usb_changed())
+        {
             refresh_devices(&app);
         }
         update_burn(&app);
@@ -1338,7 +1619,8 @@ void android_main(struct android_app *android_app)
         sleep_ms(16);
     }
 
-    if (app.burn_job) {
+    if (app.burn_job)
+    {
         crossos_optical_burn_free(app.burn_job);
         app.burn_job = NULL;
     }

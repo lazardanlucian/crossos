@@ -23,31 +23,33 @@
 
 /* ── External references ──────────────────────────────────────────────── */
 /* s_app is declared extern in android_internal.h */
-extern volatile int         crossos__quit_requested;
-extern void                 crossos__set_error(const char *fmt, ...);
-extern void                 crossos_android_on_window_init(ANativeWindow *new_win);
-extern void                 crossos_android_on_window_term(void);
+extern volatile int crossos__quit_requested;
+extern void crossos__set_error(const char *fmt, ...);
+extern void crossos_android_on_window_init(ANativeWindow *new_win);
+extern void crossos_android_on_window_term(void);
 
 /* ── Event queue ──────────────────────────────────────────────────────── */
 
 #define QUEUE_CAP 256
 
 static crossos_event_t s_queue[QUEUE_CAP];
-static int             s_head = 0;
-static int             s_tail = 0;
+static int s_head = 0;
+static int s_tail = 0;
 
 void crossos__push_event(const crossos_event_t *ev)
 {
     int next = (s_head + 1) % QUEUE_CAP;
-    if (next == s_tail) return; /* queue full – drop incoming event */
+    if (next == s_tail)
+        return; /* queue full – drop incoming event */
     s_queue[s_head] = *ev;
     s_head = next;
 }
 
 static int pop_event(crossos_event_t *ev)
 {
-    if (s_tail == s_head) return 0;
-    *ev    = s_queue[s_tail];
+    if (s_tail == s_head)
+        return 0;
+    *ev = s_queue[s_tail];
     s_tail = (s_tail + 1) % QUEUE_CAP;
     return 1;
 }
@@ -56,38 +58,46 @@ static int pop_event(crossos_event_t *ev)
 
 static void process_input_event(AInputEvent *aev)
 {
-    if (AInputEvent_getType(aev) != AINPUT_EVENT_TYPE_MOTION) return;
+    if (AInputEvent_getType(aev) != AINPUT_EVENT_TYPE_MOTION)
+        return;
 
-    int32_t action     = AMotionEvent_getAction(aev);
-    int32_t action_idx = (action & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK)
-                         >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
-    int32_t masked     = action & AMOTION_EVENT_ACTION_MASK;
+    int32_t action = AMotionEvent_getAction(aev);
+    int32_t action_idx = (action & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
+    int32_t masked = action & AMOTION_EVENT_ACTION_MASK;
 
     crossos_event_t ev;
     memset(&ev, 0, sizeof(ev));
 
-    switch (masked) {
+    switch (masked)
+    {
     case AMOTION_EVENT_ACTION_DOWN:
     case AMOTION_EVENT_ACTION_POINTER_DOWN:
-        ev.type = CROSSOS_EVENT_TOUCH_BEGIN;  break;
+        ev.type = CROSSOS_EVENT_TOUCH_BEGIN;
+        break;
     case AMOTION_EVENT_ACTION_UP:
     case AMOTION_EVENT_ACTION_POINTER_UP:
-        ev.type = CROSSOS_EVENT_TOUCH_END;    break;
+        ev.type = CROSSOS_EVENT_TOUCH_END;
+        break;
     case AMOTION_EVENT_ACTION_MOVE:
-        ev.type = CROSSOS_EVENT_TOUCH_UPDATE; break;
+        ev.type = CROSSOS_EVENT_TOUCH_UPDATE;
+        break;
     case AMOTION_EVENT_ACTION_CANCEL:
-        ev.type = CROSSOS_EVENT_TOUCH_CANCEL; break;
-    default: return;
+        ev.type = CROSSOS_EVENT_TOUCH_CANCEL;
+        break;
+    default:
+        return;
     }
 
     int32_t count = (int32_t)AMotionEvent_getPointerCount(aev);
-    if (count > CROSSOS_MAX_TOUCH_POINTS) count = CROSSOS_MAX_TOUCH_POINTS;
+    if (count > CROSSOS_MAX_TOUCH_POINTS)
+        count = CROSSOS_MAX_TOUCH_POINTS;
     ev.touch.count = (int)count;
 
-    for (int32_t i = 0; i < count; i++) {
-        ev.touch.points[i].id       = AMotionEvent_getPointerId(aev, (size_t)i);
-        ev.touch.points[i].x        = AMotionEvent_getX(aev, (size_t)i);
-        ev.touch.points[i].y        = AMotionEvent_getY(aev, (size_t)i);
+    for (int32_t i = 0; i < count; i++)
+    {
+        ev.touch.points[i].id = AMotionEvent_getPointerId(aev, (size_t)i);
+        ev.touch.points[i].x = AMotionEvent_getX(aev, (size_t)i);
+        ev.touch.points[i].y = AMotionEvent_getY(aev, (size_t)i);
         ev.touch.points[i].pressure = AMotionEvent_getPressure(aev, (size_t)i);
     }
 
@@ -101,17 +111,23 @@ static void process_input_event(AInputEvent *aev)
         crossos_event_t pev;
         int emit = 1;
         memset(&pev, 0, sizeof(pev));
-        switch (masked) {
+        switch (masked)
+        {
         case AMOTION_EVENT_ACTION_DOWN:
-            pev.type = CROSSOS_EVENT_POINTER_DOWN;  break;
+            pev.type = CROSSOS_EVENT_POINTER_DOWN;
+            break;
         case AMOTION_EVENT_ACTION_UP:
-            pev.type = CROSSOS_EVENT_POINTER_UP;    break;
+            pev.type = CROSSOS_EVENT_POINTER_UP;
+            break;
         case AMOTION_EVENT_ACTION_MOVE:
-            pev.type = CROSSOS_EVENT_POINTER_MOVE;  break;
+            pev.type = CROSSOS_EVENT_POINTER_MOVE;
+            break;
         default:
-            emit = 0;                               break;
+            emit = 0;
+            break;
         }
-        if (emit) {
+        if (emit)
+        {
             pev.pointer.x = AMotionEvent_getX(aev, 0);
             pev.pointer.y = AMotionEvent_getY(aev, 0);
             crossos__push_event(&pev);
@@ -126,13 +142,15 @@ static void handle_cmd(struct android_app *app, int32_t cmd)
     crossos_event_t ev;
     memset(&ev, 0, sizeof(ev));
 
-    switch (cmd) {
+    switch (cmd)
+    {
     case APP_CMD_INIT_WINDOW:
         /* Surface created or recreated (e.g. app resumed from background). */
-        if (app->window) {
+        if (app->window)
+        {
             crossos_android_on_window_init(app->window);
-            ev.type          = CROSSOS_EVENT_WINDOW_RESIZE;
-            ev.resize.width  = ANativeWindow_getWidth(app->window);
+            ev.type = CROSSOS_EVENT_WINDOW_RESIZE;
+            ev.resize.width = ANativeWindow_getWidth(app->window);
             ev.resize.height = ANativeWindow_getHeight(app->window);
             crossos__push_event(&ev);
         }
@@ -143,15 +161,16 @@ static void handle_cmd(struct android_app *app, int32_t cmd)
         crossos_android_on_window_term();
         break;
     case APP_CMD_DESTROY:
-        ev.type = CROSSOS_EVENT_WINDOW_CLOSE;
-        crossos__push_event(&ev);
+        /* Do not emit WINDOW_CLOSE here; activity transitions (picker/settings)
+         * can recreate windows and this would terminate the native loop early. */
         break;
     case APP_CMD_WINDOW_RESIZED:
     case APP_CMD_CONFIG_CHANGED:
-        if (app->window) {
+        if (app->window)
+        {
             crossos_android_on_window_init(app->window);
-            ev.type          = CROSSOS_EVENT_WINDOW_RESIZE;
-            ev.resize.width  = ANativeWindow_getWidth(app->window);
+            ev.type = CROSSOS_EVENT_WINDOW_RESIZE;
+            ev.resize.width = ANativeWindow_getWidth(app->window);
             ev.resize.height = ANativeWindow_getHeight(app->window);
             crossos__push_event(&ev);
         }
@@ -178,22 +197,31 @@ static int32_t handle_input(struct android_app *app, AInputEvent *aev)
 
 int crossos_poll_event(crossos_event_t *ev)
 {
-    if (!ev) return 0;
+    if (!ev)
+        return 0;
 
     /* Let android_app_glue dispatch pending callbacks */
-    if (s_app) {
+    if (s_app)
+    {
         int events;
         struct android_poll_source *source;
-        s_app->onAppCmd    = handle_cmd;
+        s_app->onAppCmd = handle_cmd;
         s_app->onInputEvent = handle_input;
 
-        while (ALooper_pollAll(0, NULL, &events, (void **)&source) >= 0) {
-            if (source) source->process(s_app, source);
-            if (s_app->destroyRequested) { crossos__quit_requested = 1; break; }
+        while (ALooper_pollAll(0, NULL, &events, (void **)&source) >= 0)
+        {
+            if (source)
+                source->process(s_app, source);
+            if (s_app->destroyRequested)
+            {
+                crossos__quit_requested = 1;
+                break;
+            }
         }
     }
 
-    if (crossos__quit_requested && s_tail == s_head) {
+    if (crossos__quit_requested && s_tail == s_head)
+    {
         ev->type = CROSSOS_EVENT_QUIT;
         return 1;
     }
@@ -202,19 +230,26 @@ int crossos_poll_event(crossos_event_t *ev)
 
 int crossos_wait_event(crossos_event_t *ev)
 {
-    if (!ev) return 0;
-    for (;;) {
-        if (pop_event(ev)) return (ev->type != CROSSOS_EVENT_QUIT);
+    if (!ev)
+        return 0;
+    for (;;)
+    {
+        if (pop_event(ev))
+            return (ev->type != CROSSOS_EVENT_QUIT);
 
-        if (s_app) {
+        if (s_app)
+        {
             int events;
             struct android_poll_source *source;
-            s_app->onAppCmd     = handle_cmd;
+            s_app->onAppCmd = handle_cmd;
             s_app->onInputEvent = handle_input;
 
-            if (ALooper_pollAll(-1, NULL, &events, (void **)&source) >= 0) {
-                if (source) source->process(s_app, source);
-                if (s_app->destroyRequested) {
+            if (ALooper_pollAll(-1, NULL, &events, (void **)&source) >= 0)
+            {
+                if (source)
+                    source->process(s_app, source);
+                if (s_app->destroyRequested)
+                {
                     crossos__quit_requested = 1;
                     ev->type = CROSSOS_EVENT_QUIT;
                     return 0;
@@ -224,28 +259,33 @@ int crossos_wait_event(crossos_event_t *ev)
     }
 }
 
-void crossos_run_loop(crossos_window_t    *win,
-                      crossos_event_cb_t   cb,
-                      void                *user_data)
+void crossos_run_loop(crossos_window_t *win,
+                      crossos_event_cb_t cb,
+                      void *user_data)
 {
     (void)win;
     crossos_event_t ev;
-    while (!crossos__quit_requested) {
-        if (!crossos_wait_event(&ev)) break;
+    while (!crossos__quit_requested)
+    {
+        if (!crossos_wait_event(&ev))
+            break;
         if (ev.type == CROSSOS_EVENT_QUIT ||
-            ev.type == CROSSOS_EVENT_WINDOW_CLOSE) {
+            ev.type == CROSSOS_EVENT_WINDOW_CLOSE)
+        {
             crossos__quit_requested = 1;
         }
-        if (cb) cb(&ev, user_data);
+        if (cb)
+            cb(&ev, user_data);
     }
 }
 
 /* ── Touch queries ────────────────────────────────────────────────────── */
 
-int crossos_touch_get_active(const crossos_window_t  *win,
-                              crossos_touch_point_t    pts[CROSSOS_MAX_TOUCH_POINTS])
+int crossos_touch_get_active(const crossos_window_t *win,
+                             crossos_touch_point_t pts[CROSSOS_MAX_TOUCH_POINTS])
 {
-    (void)win; (void)pts;
+    (void)win;
+    (void)pts;
     return 0; /* Snapshot not available via NDK; use events */
 }
 

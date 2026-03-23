@@ -2,11 +2,16 @@ package io.crossos.hello;
 
 import android.app.AlertDialog;
 import android.app.NativeActivity;
+import android.Manifest;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
+import android.provider.Settings;
 import android.provider.OpenableColumns;
 import android.text.InputType;
 import android.view.inputmethod.InputMethodManager;
@@ -17,10 +22,14 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 public final class CrossOSNativeActivity extends NativeActivity {
 	private static final int REQUEST_PICK_FILES = 42173;
+	private static final int REQUEST_MANAGE_ALL_FILES = 42174;
+	private static final int REQUEST_RUNTIME_STORAGE = 42175;
 	private static final int MAX_PICK_RESULTS = 64;
 	private static final int COPY_BUFFER_SIZE = 64 * 1024;
 
@@ -30,6 +39,22 @@ public final class CrossOSNativeActivity extends NativeActivity {
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {
 		super.onCreate(savedInstanceState);
+		requestStorageAccessIfNeeded();
+	}
+
+	private void requestStorageAccessIfNeeded() {
+		if (Build.VERSION.SDK_INT >= 30 && !Environment.isExternalStorageManager()) {
+			Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+					Uri.parse("package:" + getPackageName()));
+			startActivityForResult(intent, REQUEST_MANAGE_ALL_FILES);
+			return;
+		}
+
+		if (Build.VERSION.SDK_INT < 33) {
+			if (checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+				requestPermissions(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, REQUEST_RUNTIME_STORAGE);
+			}
+		}
 	}
 
 	public void showFilterInput(final String initialText) {
@@ -76,6 +101,13 @@ public final class CrossOSNativeActivity extends NativeActivity {
 	protected void onActivityResult(int requestCode, int resultCode, Intent data) {
 		super.onActivityResult(requestCode, resultCode, data);
 
+		if (requestCode == REQUEST_MANAGE_ALL_FILES) {
+			if (Build.VERSION.SDK_INT >= 30 && !Environment.isExternalStorageManager()) {
+				requestStorageAccessIfNeeded();
+			}
+			return;
+		}
+
 		if (requestCode != REQUEST_PICK_FILES) {
 			return;
 		}
@@ -85,27 +117,65 @@ public final class CrossOSNativeActivity extends NativeActivity {
 			return;
 		}
 
+		final Uri single = data.getData();
+		final android.content.ClipData clip = data.getClipData();
+
+		new Thread(() -> {
+			try {
+				String[] picked = processPickedUris(single, clip);
+				runOnUiThread(() -> {
+					if (!isFinishing()) {
+						nativeSetPickedFiles(picked);
+					}
+				});
+			} catch (Throwable ignored) {
+				runOnUiThread(() -> {
+					if (!isFinishing()) {
+						nativeSetPickedFiles(null);
+					}
+				});
+			}
+		}, "crossos-picker-copy").start();
+	}
+
+	@Override
+	public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+		super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+		if (requestCode == REQUEST_RUNTIME_STORAGE) {
+			for (int result : grantResults) {
+				if (result != PackageManager.PERMISSION_GRANTED) {
+					return;
+				}
+			}
+		}
+	}
+
+	private String[] processPickedUris(Uri single, android.content.ClipData clipData) {
+		final Set<String> uniqueUris = new LinkedHashSet<>();
 		final List<String> pickedPaths = new ArrayList<>();
 
-		if (data.getData() != null) {
-			String copied = copyUriToAppCache(data.getData(), pickedPaths.size());
+		if (single != null) {
+			uniqueUris.add(single.toString());
+		}
+
+		if (clipData != null) {
+			int count = Math.min(clipData.getItemCount(), MAX_PICK_RESULTS);
+			for (int i = 0; i < count; i++) {
+				Uri uri = clipData.getItemAt(i).getUri();
+				if (uri != null) {
+					uniqueUris.add(uri.toString());
+				}
+			}
+		}
+
+		for (String uriText : uniqueUris) {
+			String copied = copyUriToAppCache(Uri.parse(uriText), pickedPaths.size());
 			if (copied != null) {
 				pickedPaths.add(copied);
 			}
 		}
 
-		if (data.getClipData() != null) {
-			int count = Math.min(data.getClipData().getItemCount(), MAX_PICK_RESULTS);
-			for (int i = 0; i < count; i++) {
-				Uri uri = data.getClipData().getItemAt(i).getUri();
-				String copied = copyUriToAppCache(uri, pickedPaths.size());
-				if (copied != null) {
-					pickedPaths.add(copied);
-				}
-			}
-		}
-
-		nativeSetPickedFiles(pickedPaths.toArray(new String[0]));
+		return pickedPaths.toArray(new String[0]);
 	}
 
 	private String copyUriToAppCache(Uri uri, int index) {
@@ -130,7 +200,7 @@ public final class CrossOSNativeActivity extends NativeActivity {
 			return null;
 		}
 
-		File outFile = new File(dir, index + "_" + name);
+		File outFile = new File(dir, System.currentTimeMillis() + "_" + index + "_" + name);
 		try (InputStream in = getContentResolver().openInputStream(uri);
 			 FileOutputStream out = new FileOutputStream(outFile, false)) {
 			if (in == null) {

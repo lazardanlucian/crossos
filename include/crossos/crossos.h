@@ -42,6 +42,7 @@
 #include "optical.h"
 #include "bluetooth.h"
 #include "image.h"
+#include "camera.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -50,10 +51,10 @@ extern "C" {
 /* ── SDK version ──────────────────────────────────────────────────────── */
 
 #define CROSSOS_VERSION_MAJOR 0
-#define CROSSOS_VERSION_MINOR 2
+#define CROSSOS_VERSION_MINOR 3
 #define CROSSOS_VERSION_PATCH 0
 
-#define CROSSOS_VERSION_STRING "0.2.0"
+#define CROSSOS_VERSION_STRING "0.3.0"
 
 /* ── SDK lifecycle ────────────────────────────────────────────────────── */
 

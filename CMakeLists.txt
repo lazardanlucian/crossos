@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(crossos
-    VERSION   0.2.0
+    VERSION   0.3.0
     LANGUAGES C
     DESCRIPTION "Cross-platform display driver / input SDK"
 )
@@ -27,6 +27,7 @@ set(CROSSOS_SOURCES
     src/core/optical.c
     src/core/bluetooth.c
     src/core/image.c
+    src/core/camera.c
     src/core/web_backend_fallback.c
 )
 
@@ -35,6 +36,7 @@ if(WIN32)
         src/platform/windows/window_win32.c
         src/platform/windows/input_win32.c
         src/platform/windows/bluetooth_win32.c
+        src/platform/windows/camera_win32.c
     )
 elseif(ANDROID)
     list(APPEND CROSSOS_SOURCES
@@ -42,12 +44,14 @@ elseif(ANDROID)
         src/platform/android/input_android.c
         src/platform/android/optical_android.c
         src/platform/android/bluetooth_android.c
+        src/platform/android/camera_android.c
     )
 elseif(UNIX)
     list(APPEND CROSSOS_SOURCES
         src/platform/linux/window_x11.c
         src/platform/linux/input_x11.c
         src/platform/linux/bluetooth_linux.c
+        src/platform/linux/camera_linux.c
     )
 endif()
 

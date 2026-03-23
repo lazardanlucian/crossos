@@ -234,7 +234,7 @@ crossos_result_t bt_platform_recv(crossos_bt_socket_t *sock,
 
     if (n < 0) {
         int err = WSAGetLastError();
-        if (nonblocking && (err == WSAEWOULDBLOCK || err == WSAENOTSOCK)) {
+        if (nonblocking && (err == WSAEWOULDBLOCK)) {
             if (out_recv) *out_recv = 0;
             return CROSSOS_OK;
         }

@@ -523,7 +523,7 @@ static void draw_char8x16(const crossos_framebuffer_t *fb,
                           int scale,
                           int smooth)
 {
-    if (c < 0x20 || c > 0x7E) c = 0x7F - 1; /* map unknowns to '?' area */
+    if (c < 0x20 || c > 0x7E) c = '?'; /* map unknowns to '?' */
     const unsigned char *rows = s_font8x16[(unsigned)(c - 0x20)];
 
     for (int row = 0; row < FONT8X16_H; row++) {

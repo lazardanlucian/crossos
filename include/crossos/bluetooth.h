@@ -41,6 +41,11 @@
 extern "C" {
 #endif
 
+/* ── Constants ───────────────────────────────────────────────────────── */
+
+/** Maximum valid RFCOMM channel number (channels 1–30 are user-allocatable). */
+#define CROSSOS_BT_RFCOMM_MAX_CHANNEL 30
+
 /* ── Device descriptor ───────────────────────────────────────────────── */
 
 /** Describes a discovered or paired Bluetooth device. */

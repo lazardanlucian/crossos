@@ -121,7 +121,7 @@ int crossos_draw_text_height(int scale);
 typedef enum crossos_font {
     CROSSOS_FONT_GLYPH       = 0, /**< 5×7 pixel-art glyph (default)        */
     CROSSOS_FONT_GLYPH_LARGE = 1, /**< 8×16 PC-OEM bitmap                   */
-    CROSSOS_FONT_SMOOTH      = 2, /**< 8×16 bitmap with anti-aliased edges   */
+    CROSSOS_FONT_SMOOTH      = 2, /**< 8×16 bitmap with alpha-blended edges  */
 } crossos_font_t;
 
 /**

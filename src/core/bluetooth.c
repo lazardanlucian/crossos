@@ -143,7 +143,7 @@ crossos_result_t crossos_bt_connect(const char          *address,
                                     crossos_bt_socket_t **out_sock)
 {
     if (!address || !out_sock) return CROSSOS_ERR_PARAM;
-    if (channel == 0 || channel > 30) return CROSSOS_ERR_PARAM;
+    if (channel == 0 || channel > CROSSOS_BT_RFCOMM_MAX_CHANNEL) return CROSSOS_ERR_PARAM;
     return bt_platform_connect(address, channel, out_sock);
 }
 

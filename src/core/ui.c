@@ -797,3 +797,61 @@ int crossos_ui_layout_row_next(crossos_ui_layout_t *layout,
     layout->cursor += item_w + layout->gap;
     return 1;
 }
+
+/* ── Responsive grid layout ──────────────────────────────────────────── */
+
+void crossos_ui_grid_begin(crossos_ui_grid_t *grid,
+                           int x, int y, int w, int h,
+                           int cols, int min_col_w,
+                           int row_h,
+                           int gap_x, int gap_y)
+{
+    if (!grid) return;
+    grid->x        = x;
+    grid->y        = y;
+    grid->w        = w;
+    grid->h        = h;
+    grid->min_col_w = min_col_w > 0 ? min_col_w : 1;
+    grid->row_h    = row_h > 0 ? row_h : 1;
+    grid->gap_x    = gap_x;
+    grid->gap_y    = gap_y;
+    grid->_cursor  = 0;
+
+    if (cols > 0) {
+        grid->_cols  = cols;
+        /* Divide available width evenly among columns, accounting for gaps. */
+        int total_gap = gap_x * (cols - 1);
+        grid->_col_w = (w - total_gap) / cols;
+        if (grid->_col_w < 1) grid->_col_w = 1;
+    } else {
+        /* Auto: fit as many min_col_w columns as possible. */
+        int c = (w + gap_x) / (grid->min_col_w + gap_x);
+        if (c < 1) c = 1;
+        grid->_cols = c;
+        int total_gap = gap_x * (c - 1);
+        grid->_col_w = (w - total_gap) / c;
+        if (grid->_col_w < 1) grid->_col_w = 1;
+    }
+}
+
+int crossos_ui_grid_next(crossos_ui_grid_t *grid, crossos_rect_t *out_rect)
+{
+    if (!grid || !out_rect || grid->_cols <= 0 || grid->row_h <= 0) return 0;
+
+    int col  = grid->_cursor % grid->_cols;
+    int row  = grid->_cursor / grid->_cols;
+
+    int cell_x = grid->x + col * (grid->_col_w + grid->gap_x);
+    int cell_y = grid->y + row * (grid->row_h  + grid->gap_y);
+
+    /* Stop when the cell top exceeds the container bottom. */
+    if (cell_y + grid->row_h > grid->y + grid->h) return 0;
+
+    out_rect->x      = cell_x;
+    out_rect->y      = cell_y;
+    out_rect->width  = grid->_col_w;
+    out_rect->height = grid->row_h;
+
+    grid->_cursor++;
+    return 1;
+}

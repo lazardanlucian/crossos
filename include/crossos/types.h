@@ -29,6 +29,7 @@ typedef enum crossos_result {
     CROSSOS_ERR_IO        = -7, /**< File system error                     */
     CROSSOS_ERR_NETWORK   = -8, /**< Network / HTTP request error          */
     CROSSOS_ERR_AUDIO     = -9, /**< Audio subsystem error                 */
+    CROSSOS_ERR_BLUETOOTH = -10,/**< Bluetooth subsystem error             */
 } crossos_result_t;
 
 /* ── Opaque handle types ──────────────────────────────────────────────── */
@@ -123,6 +124,12 @@ typedef enum crossos_event_type {
 
     /* File drop */
     CROSSOS_EVENT_DROP_FILES,     /**< User dragged files onto the window   */
+
+    /* Bluetooth events */
+    CROSSOS_EVENT_BT_DEVICE_FOUND,  /**< Device discovered during scan       */
+    CROSSOS_EVENT_BT_CONNECTED,     /**< Connection to remote device opened  */
+    CROSSOS_EVENT_BT_DISCONNECTED,  /**< Connection to remote device closed  */
+    CROSSOS_EVENT_BT_DATA,          /**< Incoming data on a BT socket        */
 } crossos_event_type_t;
 
 /** Payload for CROSSOS_EVENT_WINDOW_RESIZE. */
@@ -170,6 +177,16 @@ typedef struct crossos_event_drop {
     const char  **paths; /**< Array of `count` NUL-terminated UTF-8 paths */
 } crossos_event_drop_t;
 
+/** Payload for Bluetooth device events. */
+typedef struct crossos_event_bt {
+    char address[18]; /**< "XX:XX:XX:XX:XX:XX" NUL-terminated            */
+    char name[64];    /**< Human-readable device name (may be empty)      */
+    int  rssi;        /**< Signal strength in dBm; 0 if unavailable       */
+    /** Valid for BT_DATA: pointer to received bytes (valid until next poll) */
+    const unsigned char *data;
+    int                  data_len;
+} crossos_event_bt_t;
+
 /** Tagged-union event structure delivered to the application. */
 typedef struct crossos_event {
     crossos_event_type_t   type;
@@ -181,6 +198,7 @@ typedef struct crossos_event {
         crossos_event_touch_t   touch;
         crossos_event_char_t    character;
         crossos_event_drop_t    drop;
+        crossos_event_bt_t      bluetooth;
     };
 } crossos_event_t;
 

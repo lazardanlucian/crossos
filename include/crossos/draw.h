@@ -83,7 +83,7 @@ void crossos_draw_line(const crossos_framebuffer_t *fb,
 /* ── Text ───────────────────────────────────────────────────────────── */
 
 /**
- * Draw `text` at (x, y) using the built-in 5×7 pixel font.
+ * Draw `text` at (x, y) using the built-in 5×7 pixel glyph font.
  * `scale` multiplies every pixel; 1 = native, 2 = double-size.
  * Supports printable ASCII (both cases).
  */
@@ -93,11 +93,59 @@ void crossos_draw_text(const crossos_framebuffer_t *fb,
                        crossos_color_t color,
                        int scale);
 
-/** Width in pixels of `text` at the given scale. */
+/** Width in pixels of `text` at the given scale (5×7 glyph font). */
 int crossos_draw_text_width(const char *text, int scale);
 
 /** Height of one line of text at the given scale (always 7*scale). */
 int crossos_draw_text_height(int scale);
+
+/* ── Font system ────────────────────────────────────────────────────── */
+
+/**
+ * Built-in font identifiers.
+ *
+ * CROSSOS_FONT_GLYPH        – 5×7 pixel-art glyph font (the default;
+ *                             identical to crossos_draw_text() at scale=1).
+ *                             Great for retro / oldschool UIs.
+ *
+ * CROSSOS_FONT_GLYPH_LARGE  – 8×16 classic PC-OEM bitmap font.  Wider,
+ *                             taller, and more readable at standard DPI.
+ *                             Still has that oldschool feel but with a
+ *                             noticeably higher information density.
+ *
+ * CROSSOS_FONT_SMOOTH       – Same 8×16 bitmaps as GLYPH_LARGE but with
+ *                             alpha-blended edges applied during raster to
+ *                             soften pixel transitions.  Use for a slightly
+ *                             more premium look without adding dependencies.
+ */
+typedef enum crossos_font {
+    CROSSOS_FONT_GLYPH       = 0, /**< 5×7 pixel-art glyph (default)        */
+    CROSSOS_FONT_GLYPH_LARGE = 1, /**< 8×16 PC-OEM bitmap                   */
+    CROSSOS_FONT_SMOOTH      = 2, /**< 8×16 bitmap with anti-aliased edges   */
+} crossos_font_t;
+
+/**
+ * Draw `text` at (x, y) using the specified font.
+ *
+ * @param fb    Target framebuffer.
+ * @param x,y   Top-left origin in pixels.
+ * @param text  NUL-terminated UTF-8 string (printable ASCII only).
+ * @param color Foreground colour.
+ * @param font  Font face to use.
+ * @param scale Pixel-doubling factor (1 = native, 2 = double size, …).
+ */
+void crossos_draw_text_ex(const crossos_framebuffer_t *fb,
+                          int x, int y,
+                          const char *text,
+                          crossos_color_t color,
+                          crossos_font_t font,
+                          int scale);
+
+/** Width in pixels of `text` rendered with the given font and scale. */
+int crossos_draw_text_width_ex(const char *text, crossos_font_t font, int scale);
+
+/** Height in pixels of one rendered line for the given font and scale. */
+int crossos_draw_text_height_ex(crossos_font_t font, int scale);
 
 #ifdef __cplusplus
 } /* extern "C" */

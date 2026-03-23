@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(crossos
-    VERSION   0.1.0
+    VERSION   0.2.0
     LANGUAGES C
     DESCRIPTION "Cross-platform display driver / input SDK"
 )
@@ -25,6 +25,8 @@ set(CROSSOS_SOURCES
     src/core/draw.c
     src/core/ui.c
     src/core/optical.c
+    src/core/bluetooth.c
+    src/core/image.c
     src/core/web_backend_fallback.c
 )
 
@@ -32,17 +34,20 @@ if(WIN32)
     list(APPEND CROSSOS_SOURCES
         src/platform/windows/window_win32.c
         src/platform/windows/input_win32.c
+        src/platform/windows/bluetooth_win32.c
     )
 elseif(ANDROID)
     list(APPEND CROSSOS_SOURCES
         src/platform/android/window_android.c
         src/platform/android/input_android.c
         src/platform/android/optical_android.c
+        src/platform/android/bluetooth_android.c
     )
 elseif(UNIX)
     list(APPEND CROSSOS_SOURCES
         src/platform/linux/window_x11.c
         src/platform/linux/input_x11.c
+        src/platform/linux/bluetooth_linux.c
     )
 endif()
 
@@ -112,6 +117,17 @@ elseif(UNIX)
     # pthreads (used by ALSA streaming thread)
     find_package(Threads REQUIRED)
     target_link_libraries(crossos PUBLIC Threads::Threads)
+
+    # BlueZ Bluetooth (optional – scan/connect through kernel HCI sockets)
+    find_library(BLUETOOTH_LIB bluetooth)
+    if(BLUETOOTH_LIB)
+        target_link_libraries(crossos PUBLIC ${BLUETOOTH_LIB})
+        target_compile_definitions(crossos PRIVATE CROSSOS_HAS_BLUEZ=1)
+    else()
+        message(WARNING
+            "libbluetooth not found. Bluetooth support disabled on Linux. "
+            "Install libbluetooth-dev to enable it.")
+    endif()
 endif()
 
 # Optional HTTP backend

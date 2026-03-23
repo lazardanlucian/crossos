@@ -319,6 +319,70 @@ int crossos_ui_layout_row_next(crossos_ui_layout_t *layout,
                                int item_w,
                                crossos_rect_t *out_rect);
 
+/* ── Responsive grid layout ─────────────────────────────────────────── */
+
+/**
+ * Responsive grid context.
+ *
+ * When `cols` is 0 the column count is derived automatically from the
+ * container width and `min_col_w`:
+ *   cols = max(1, (w + gap_x) / (min_col_w + gap_x))
+ *
+ * This makes layouts reflow naturally as the window is resized or when
+ * running on screens of different sizes.
+ *
+ * Usage:
+ *   crossos_ui_grid_t grid;
+ *   crossos_ui_grid_begin(&grid, x, y, w, h,
+ *                         0,         // 0 = auto columns
+ *                         120,       // min column width
+ *                         40,        // row height
+ *                         8, 8);     // gap x/y
+ *   for each item:
+ *     crossos_rect_t cell;
+ *     if (!crossos_ui_grid_next(&grid, &cell)) break;
+ *     // draw widget at cell.x, cell.y, cell.width, cell.height
+ */
+typedef struct crossos_ui_grid {
+    /* Configuration */
+    int x, y, w, h;   /**< Container bounds                                */
+    int min_col_w;     /**< Minimum column width when cols==0 (auto)        */
+    int row_h;         /**< Row height in pixels                            */
+    int gap_x, gap_y;  /**< Horizontal and vertical gaps between cells      */
+    /* Computed / internal */
+    int _cols;         /**< Resolved column count                           */
+    int _col_w;        /**< Resolved column width                           */
+    int _cursor;       /**< Next item index (0-based)                       */
+} crossos_ui_grid_t;
+
+/**
+ * Initialise a grid layout.
+ *
+ * @param grid       Grid state structure to initialise.
+ * @param x,y,w,h   Container rectangle in pixels.
+ * @param cols       Fixed column count; pass 0 for responsive auto-sizing.
+ * @param min_col_w  Minimum column width used when cols == 0.
+ * @param row_h      Row height in pixels (> 0).
+ * @param gap_x      Horizontal pixel gap between columns.
+ * @param gap_y      Vertical pixel gap between rows.
+ */
+void crossos_ui_grid_begin(crossos_ui_grid_t *grid,
+                           int x, int y, int w, int h,
+                           int cols, int min_col_w,
+                           int row_h,
+                           int gap_x, int gap_y);
+
+/**
+ * Get the rectangle for the next grid cell.
+ *
+ * Fills @p out_rect with the position and size of the next cell and advances
+ * the internal cursor.
+ *
+ * @return 1 on success; 0 when all rows have been used (past the container
+ *         bottom edge) or if the grid was not initialised.
+ */
+int crossos_ui_grid_next(crossos_ui_grid_t *grid, crossos_rect_t *out_rect);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

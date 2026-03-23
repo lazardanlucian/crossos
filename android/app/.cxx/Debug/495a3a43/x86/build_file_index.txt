@@ -1,2 +1,0 @@
-/workspaces/crossos/CMakeLists.txt
-/workspaces/crossos/android/app/src/main/cpp/CMakeLists.txt

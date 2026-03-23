@@ -32,14 +32,22 @@ public final class CrossOSNativeActivity extends NativeActivity {
 	private static final int REQUEST_RUNTIME_STORAGE = 42175;
 	private static final int MAX_PICK_RESULTS = 64;
 	private static final int COPY_BUFFER_SIZE = 64 * 1024;
+	private final Object pickedFilesLock = new Object();
+	private String[] pendingPickedFiles = null;
 
 	private static native void nativeSetFilterText(String text);
-	private static native void nativeSetPickedFiles(String[] paths);
 
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {
 		super.onCreate(savedInstanceState);
 		requestStorageAccessIfNeeded();
+		CrossOSUsbBurner.requestAttachedDevicePermissions(this);
+	}
+
+	@Override
+	protected void onResume() {
+		super.onResume();
+		CrossOSUsbBurner.requestAttachedDevicePermissions(this);
 	}
 
 	private void requestStorageAccessIfNeeded() {
@@ -113,7 +121,9 @@ public final class CrossOSNativeActivity extends NativeActivity {
 		}
 
 		if (resultCode != RESULT_OK || data == null) {
-			nativeSetPickedFiles(null);
+			synchronized (pickedFilesLock) {
+				pendingPickedFiles = new String[0];
+			}
 			return;
 		}
 
@@ -123,19 +133,23 @@ public final class CrossOSNativeActivity extends NativeActivity {
 		new Thread(() -> {
 			try {
 				String[] picked = processPickedUris(single, clip);
-				runOnUiThread(() -> {
-					if (!isFinishing()) {
-						nativeSetPickedFiles(picked);
-					}
-				});
+				synchronized (pickedFilesLock) {
+					pendingPickedFiles = picked;
+				}
 			} catch (Throwable ignored) {
-				runOnUiThread(() -> {
-					if (!isFinishing()) {
-						nativeSetPickedFiles(null);
-					}
-				});
+				synchronized (pickedFilesLock) {
+					pendingPickedFiles = new String[0];
+				}
 			}
 		}, "crossos-picker-copy").start();
+	}
+
+	public String[] consumePickedFiles() {
+		synchronized (pickedFilesLock) {
+			String[] result = pendingPickedFiles;
+			pendingPickedFiles = null;
+			return result;
+		}
 	}
 
 	@Override

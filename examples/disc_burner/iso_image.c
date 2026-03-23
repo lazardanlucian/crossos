@@ -12,13 +12,17 @@
 #include <windows.h>
 #include <direct.h>
 #include <io.h>
-#define DISC_BURNER_STAT _stat64
+#include <sys/types.h>
+#include <sys/stat.h>
+#define DISC_BURNER_STAT_STRUCT struct stat
+#define DISC_BURNER_STAT stat
 #define DISC_BURNER_UNLINK _unlink
 #else
 #include <dirent.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#define DISC_BURNER_STAT_STRUCT struct stat
 #define DISC_BURNER_STAT stat
 #define DISC_BURNER_UNLINK unlink
 extern int mkstemp(char *template_name);
@@ -246,7 +250,7 @@ static const char *iso_basename(const char *path)
 static int iso_is_dir_mode(uint64_t mode)
 {
 #if defined(_WIN32)
-    return (mode & _S_IFDIR) != 0;
+    return (mode & S_IFDIR) != 0;
 #else
     return S_ISDIR(mode) ? 1 : 0;
 #endif
@@ -338,7 +342,7 @@ static crossos_result_t iso_collect_path(iso_builder_t *builder,
                                          int parent_index,
                                          const char *path)
 {
-    struct DISC_BURNER_STAT st;
+    DISC_BURNER_STAT_STRUCT st;
     int unused = -1;
 
     if (DISC_BURNER_STAT(path, &st) != 0) {

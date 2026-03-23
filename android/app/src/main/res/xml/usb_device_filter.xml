@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- USB Mass Storage Class Devices (optical drives and USB storage) -->
+    <usb-device class="0x08" subclass="0x06" protocol="0x50" />
+
+    <!-- SCSI CD-ROM, DVD, BD (InterfaceSubclass 0x02 - SCSI) -->
+    <usb-device class="0xff" subclass="0x02" />
+    
+    <!-- SFF-8070i CD-ROM/DVD (InterfaceSubclass 0x05) -->
+    <usb-device class="0xff" subclass="0x05" />
+
+    <!-- Fallback: Any device with vendor spec class (0xff) that might be optical -->
+    <usb-device class="0xff" subclass="0x06" />
+
+    <!-- Known DVD/BD Burner Vendors (optional: be more specific) -->
+    <!-- LG Electronics -->
+    <usb-device vendor-id="0x0bb8" product-id="0x0100" />
+    <!-- Sony VAIO -->
+    <usb-device vendor-id="0x054c" />
+    <!-- Buffalo -->
+    <usb-device vendor-id="0x0411" />
+    <!-- Plextor -->
+    <usb-device vendor-id="0x093b" />
+    <!-- AOpen -->
+    <usb-device vendor-id="0x0402" />
+</resources>

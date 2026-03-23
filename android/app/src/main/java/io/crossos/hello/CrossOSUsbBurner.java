@@ -14,6 +14,7 @@ import android.hardware.usb.UsbInterface;
 import android.hardware.usb.UsbManager;
 import android.os.Build;
 import android.os.SystemClock;
+import android.util.Log;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -28,6 +29,8 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public final class CrossOSUsbBurner {
     private static final String ACTION_USB_PERMISSION = "io.crossos.hello.USB_PERMISSION";
+    private static final String TAG = "CrossOSUsbBurner";
+    private static final boolean DEBUG = true;
     private static final int BULK_TIMEOUT_MS = 10000;
     private static final int SCSI_DIR_OUT = 0;
     private static final int SCSI_DIR_IN = 1;
@@ -47,25 +50,93 @@ public final class CrossOSUsbBurner {
     }
 
     public static synchronized boolean init(Activity activity) {
+        if (DEBUG) Log.i(TAG, "init: Starting initialization");
+        
         usbManager = (UsbManager) activity.getSystemService(Context.USB_SERVICE);
         if (usbManager == null) {
             lastError = "UsbManager unavailable";
+            if (DEBUG) Log.e(TAG, "init: " + lastError);
             return false;
         }
+        
+        if (DEBUG) Log.d(TAG, "init: UsbManager obtained successfully");
 
         if (!receiverRegistered) {
-            IntentFilter filter = new IntentFilter(ACTION_USB_PERMISSION);
-            filter.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED);
-            filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
-            if (Build.VERSION.SDK_INT >= 33) {
-                activity.registerReceiver(permissionReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
-            } else {
-                activity.registerReceiver(permissionReceiver, filter);
+            try {
+                IntentFilter filter = new IntentFilter(ACTION_USB_PERMISSION);
+                filter.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED);
+                filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
+                if (Build.VERSION.SDK_INT >= 33) {
+                    activity.registerReceiver(permissionReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+                } else {
+                    activity.registerReceiver(permissionReceiver, filter);
+                }
+                receiverRegistered = true;
+                if (DEBUG) Log.i(TAG, "init: BroadcastReceiver registered for USB events");
+            } catch (Exception ex) {
+                if (DEBUG) Log.e(TAG, "init: Failed to register BroadcastReceiver: " + ex.getMessage());
+                lastError = "Failed to register BroadcastReceiver: " + ex.getMessage();
+                return false;
             }
-            receiverRegistered = true;
+        } else {
+            if (DEBUG) Log.d(TAG, "init: BroadcastReceiver already registered");
         }
 
+        requestAttachedDevicePermissions(activity);
+        
+        if (DEBUG) Log.i(TAG, "init: Initialization complete");
         return true;
+    }
+
+    public static synchronized void requestAttachedDevicePermissions(Activity activity) {
+        if (activity == null && usbManager == null) {
+            if (DEBUG) Log.w(TAG, "requestAttachedDevicePermissions: both activity and usbManager are null");
+            return;
+        }
+
+        if (usbManager == null) {
+            usbManager = (UsbManager) activity.getSystemService(Context.USB_SERVICE);
+            if (usbManager == null) {
+                if (DEBUG) Log.e(TAG, "requestAttachedDevicePermissions: cannot obtain UsbManager");
+                return;
+            }
+        }
+
+        int deviceCount = 0;
+        int permissionRequested = 0;
+        int alreadyGranted = 0;
+        int noInterface = 0;
+        
+        for (UsbDevice dev : usbManager.getDeviceList().values()) {
+            deviceCount++;
+            String devId = makeDeviceId(dev);
+            
+            UsbInterface intf = findMassStorageInterface(dev);
+            if (intf == null) {
+                noInterface++;
+                if (DEBUG) Log.v(TAG, "requestAttachedDevicePermissions: " + devId + " - no MS interface");
+                continue;
+            }
+
+            if (usbManager.hasPermission(dev)) {
+                alreadyGranted++;
+                if (DEBUG) Log.v(TAG, "requestAttachedDevicePermissions: " + devId + " - already granted");
+                continue;
+            }
+
+            PendingIntent pi = PendingIntent.getBroadcast(
+                activity,
+                dev.getDeviceId(),
+                new Intent(ACTION_USB_PERMISSION),
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+            );
+            usbManager.requestPermission(dev, pi);
+            permissionRequested++;
+            if (DEBUG) Log.i(TAG, "requestAttachedDevicePermissions: " + devId + " - permission requested");
+        }
+        
+        if (DEBUG) Log.i(TAG, "requestAttachedDevicePermissions: Scanned " + deviceCount + " devices - " +
+                       alreadyGranted + " granted, " + permissionRequested + " requested, " + noInterface + " no interface");
     }
 
     public static synchronized String getLastError() {
@@ -83,25 +154,48 @@ public final class CrossOSUsbBurner {
 
     public static synchronized String listDevices(Activity activity) {
         if (!init(activity)) {
+            if (DEBUG) Log.e(TAG, "listDevices: init failed");
             return "";
         }
 
+        if (DEBUG) Log.i(TAG, "listDevices: Starting device enumeration");
+        
+        int totalDevices = usbManager.getDeviceList().size();
+        if (DEBUG) Log.i(TAG, "listDevices: Found " + totalDevices + " total USB devices");
+
         StringBuilder sb = new StringBuilder();
+        int deviceIndex = 0;
+        
         for (UsbDevice dev : usbManager.getDeviceList().values()) {
+            deviceIndex++;
+            String devId = makeDeviceId(dev);
+            String devName = dev.getDeviceName();
+            String devLabel = "unknown";
+            if (Build.VERSION.SDK_INT >= 21) {
+                String prod = dev.getProductName();
+                String mfr = dev.getManufacturerName();
+                devLabel = (mfr != null ? mfr : "") + " " + (prod != null ? prod : "");
+            }
+            
+            if (DEBUG) Log.i(TAG, "listDevices [" + deviceIndex + "/" + totalDevices + "]: " + devId + " - " + devLabel.trim());
+            
             UsbInterface mass = findMassStorageInterface(dev);
             if (mass == null) {
+                if (DEBUG) Log.d(TAG, "listDevices: Device " + devId + " - no mass storage interface found");
                 continue;
             }
+            
+            if (DEBUG) Log.d(TAG, "listDevices: Device " + devId + " - found mass storage interface");
 
             boolean isOptical = looksLikeOptical(activity, dev, mass);
-            if (!isOptical) {
-                continue;
-            }
+            if (DEBUG) Log.i(TAG, "listDevices: Device " + devId + " - isOptical=" + isOptical);
 
-            String id = makeDeviceId(dev);
-            String label = "USB Optical "
-                + String.format("%04x:%04x", dev.getVendorId(), dev.getProductId());
+            String id = devId;
+            String label = buildDeviceLabel(dev, isOptical);
             DeviceProbe probe = probeDevice(activity, dev, mass);
+            
+            if (DEBUG) Log.d(TAG, "listDevices: Device " + devId + " - probe: hasMedia=" + probe.hasMedia + 
+                           ", capacity=" + probe.capacityBytes + ", free=" + probe.freeBytes);
 
             sb.append(id).append('\t')
                 .append(escape(label)).append('\t')
@@ -113,7 +207,38 @@ public final class CrossOSUsbBurner {
                 .append(probe.freeBytes).append('\n');
         }
 
+        if (DEBUG) Log.i(TAG, "listDevices: Enumeration complete, found optical devices: " + (sb.length() > 0 ? "yes" : "no"));
         return sb.toString();
+    }
+
+    private static String buildDeviceLabel(UsbDevice dev, boolean isOptical) {
+        String product = null;
+        String manufacturer = null;
+
+        if (Build.VERSION.SDK_INT >= 21) {
+            product = dev.getProductName();
+            manufacturer = dev.getManufacturerName();
+        }
+
+        StringBuilder label = new StringBuilder();
+        label.append(isOptical ? "USB Optical " : "USB Candidate ");
+
+        if (manufacturer != null && !manufacturer.isEmpty()) {
+            label.append(manufacturer).append(' ');
+        }
+        if (product != null && !product.isEmpty()) {
+            label.append(product);
+        }
+
+        if (label.charAt(label.length() - 1) == ' ') {
+            label.setLength(label.length() - 1);
+        }
+
+        if (label.toString().equals("USB Optical") || label.toString().equals("USB Candidate")) {
+            label.append(' ').append(String.format("%04x:%04x", dev.getVendorId(), dev.getProductId()));
+        }
+
+        return label.toString();
     }
 
     public static synchronized long startBurn(Activity activity, String targetId, String[] paths) {
@@ -220,37 +345,90 @@ public final class CrossOSUsbBurner {
     }
 
     private static UsbInterface findMassStorageInterface(UsbDevice dev) {
+        String devId = makeDeviceId(dev);
+        if (DEBUG) Log.d(TAG, "findMassStorageInterface: " + devId + " - checking " + dev.getInterfaceCount() + " interfaces");
+        
         for (int i = 0; i < dev.getInterfaceCount(); i++) {
             UsbInterface intf = dev.getInterface(i);
+            if (DEBUG) Log.v(TAG, "findMassStorageInterface: " + devId + " [" + i + "] class=0x" + 
+                           String.format("%02x", intf.getInterfaceClass()) + 
+                           " subclass=0x" + String.format("%02x", intf.getInterfaceSubclass()));
+            
             if (intf.getInterfaceClass() == UsbConstants.USB_CLASS_MASS_STORAGE) {
+                if (DEBUG) Log.i(TAG, "findMassStorageInterface: " + devId + " - found MS interface at [" + i + "]");
                 return intf;
             }
         }
+
+        if (DEBUG) Log.d(TAG, "findMassStorageInterface: " + devId + " - no MS class, checking for bulk endpoints");
+        
+        for (int i = 0; i < dev.getInterfaceCount(); i++) {
+            UsbInterface intf = dev.getInterface(i);
+            if (hasBulkEndpoints(intf)) {
+                if (DEBUG) Log.i(TAG, "findMassStorageInterface: " + devId + " - found bulk endpoints at [" + i + "]");
+                return intf;
+            }
+        }
+
+        if (DEBUG) Log.w(TAG, "findMassStorageInterface: " + devId + " - no suitable interface found");
         return null;
     }
 
+    private static boolean hasBulkEndpoints(UsbInterface intf) {
+        boolean hasIn = false;
+        boolean hasOut = false;
+
+        for (int i = 0; i < intf.getEndpointCount(); i++) {
+            UsbEndpoint ep = intf.getEndpoint(i);
+            if (ep.getType() != UsbConstants.USB_ENDPOINT_XFER_BULK) {
+                continue;
+            }
+            if (ep.getDirection() == UsbConstants.USB_DIR_IN) {
+                hasIn = true;
+            } else if (ep.getDirection() == UsbConstants.USB_DIR_OUT) {
+                hasOut = true;
+            }
+        }
+
+        return hasIn && hasOut;
+    }
+
     private static boolean looksLikeOptical(Activity activity, UsbDevice dev, UsbInterface intf) {
+        String devId = makeDeviceId(dev);
+        
+        if (deviceNameHintsOptical(dev)) {
+            if (DEBUG) Log.i(TAG, "looksLikeOptical: " + devId + " - MATCHED by device name");
+            return true;
+        }
+
         if (intf.getInterfaceSubclass() == 0x02 || intf.getInterfaceSubclass() == 0x05) {
+            if (DEBUG) Log.i(TAG, "looksLikeOptical: " + devId + " - MATCHED by subclass (0x" + 
+                           String.format("%02x", intf.getInterfaceSubclass()) + ")");
             return true;
         }
 
         if (!ensureUsbPermission(activity, dev)) {
+            if (DEBUG) Log.w(TAG, "looksLikeOptical: " + devId + " - cannot get permission, assuming optical");
             return true;
         }
 
         UsbEndpoint in = findEndpoint(intf, UsbConstants.USB_DIR_IN);
         UsbEndpoint out = findEndpoint(intf, UsbConstants.USB_DIR_OUT);
         if (in == null || out == null) {
+            if (DEBUG) Log.w(TAG, "looksLikeOptical: " + devId + " - no bulk endpoints (in=" + 
+                           (in != null) + ", out=" + (out != null) + ")");
             return false;
         }
 
         UsbDeviceConnection conn = usbManager.openDevice(dev);
         if (conn == null) {
+            if (DEBUG) Log.w(TAG, "looksLikeOptical: " + devId + " - cannot open device, assuming optical");
             return true;
         }
 
         boolean claimed = conn.claimInterface(intf, true);
         if (!claimed) {
+            if (DEBUG) Log.w(TAG, "looksLikeOptical: " + devId + " - cannot claim interface, assuming optical");
             conn.close();
             return true;
         }
@@ -258,14 +436,51 @@ public final class CrossOSUsbBurner {
         try {
             byte[] inquiry = scsiInquiry(conn, in, out);
             if (inquiry == null || inquiry.length < 36) {
+                if (DEBUG) Log.w(TAG, "looksLikeOptical: " + devId + " - SCSI INQUIRY failed or too short (len=" + 
+                               (inquiry != null ? inquiry.length : 0) + ")");
                 return true;
             }
             int type = inquiry[0] & 0x1F;
-            return type == 0x05;
+            boolean isOptical = (type == 0x05);
+            if (DEBUG) Log.i(TAG, "looksLikeOptical: " + devId + " - SCSI device type=0x" + 
+                           String.format("%02x", type) + " -> isOptical=" + isOptical);
+            return isOptical;
+        } catch (Exception ex) {
+            if (DEBUG) Log.e(TAG, "looksLikeOptical: " + devId + " - SCSI probe exception: " + ex.getMessage());
+            return true;
         } finally {
             conn.releaseInterface(intf);
             conn.close();
         }
+    }
+
+    private static boolean deviceNameHintsOptical(UsbDevice dev) {
+        StringBuilder text = new StringBuilder();
+        if (Build.VERSION.SDK_INT >= 21) {
+            if (dev.getManufacturerName() != null) {
+                text.append(dev.getManufacturerName()).append(' ');
+            }
+            if (dev.getProductName() != null) {
+                text.append(dev.getProductName()).append(' ');
+            }
+        }
+        if (dev.getDeviceName() != null) {
+            text.append(dev.getDeviceName());
+        }
+
+        String lower = text.toString().toLowerCase();
+        
+        if (DEBUG) Log.v(TAG, "deviceNameHintsOptical: Checking device name: " + lower);
+        
+        boolean isOptical = lower.contains("dvd") || lower.contains("cd") || lower.contains("cdr") ||
+               lower.contains("cdrw") || lower.contains("bluray") || lower.contains("bd") ||
+               lower.contains("optical") || lower.contains("writer") || lower.contains("burner") ||
+               lower.contains("drive") || lower.contains("recorder") || lower.contains("combo") ||
+               lower.contains("multi") || lower.contains("rw");  // RW = ReWriter
+        
+        if (DEBUG && isOptical) Log.d(TAG, "deviceNameHintsOptical: MATCHED optical keyword in name");
+        
+        return isOptical;
     }
 
     private static DeviceProbe probeDevice(Activity activity, UsbDevice dev, UsbInterface intf) {
@@ -313,12 +528,19 @@ public final class CrossOSUsbBurner {
 
     private static boolean ensureUsbPermission(Activity activity, UsbDevice dev) {
         if (usbManager == null) {
+            if (DEBUG) Log.w(TAG, "ensureUsbPermission: usbManager is null");
             return false;
         }
+        
+        String devId = makeDeviceId(dev);
+        
         if (usbManager.hasPermission(dev)) {
+            if (DEBUG) Log.d(TAG, "ensureUsbPermission: " + devId + " - already has permission");
             return true;
         }
 
+        if (DEBUG) Log.i(TAG, "ensureUsbPermission: " + devId + " - requesting permission");
+        
         PendingIntent pi = PendingIntent.getBroadcast(
             activity,
             dev.getDeviceId(),
@@ -331,22 +553,30 @@ public final class CrossOSUsbBurner {
             usbManager.requestPermission(dev, pi);
 
             long waitUntil = SystemClock.uptimeMillis() + 8000;
+            int waitCount = 0;
             while (SystemClock.uptimeMillis() < waitUntil) {
                 Boolean granted = permissionResults.get(dev.getDeviceId());
                 if (granted != null) {
+                    if (DEBUG) Log.i(TAG, "ensureUsbPermission: " + devId + " - permission response: " + granted);
                     permissionResults.remove(dev.getDeviceId());
                     return granted;
                 }
+                waitCount++;
                 try {
                     permissionLock.wait(250);
                 } catch (InterruptedException ignored) {
                     Thread.currentThread().interrupt();
+                    if (DEBUG) Log.w(TAG, "ensureUsbPermission: " + devId + " - interrupted after " + waitCount + " waits");
                     break;
                 }
             }
+            
+            if (DEBUG) Log.w(TAG, "ensureUsbPermission: " + devId + " - timeout after " + waitCount + " waits");
         }
 
-        return usbManager.hasPermission(dev);
+        boolean hasIt = usbManager.hasPermission(dev);
+        if (DEBUG) Log.i(TAG, "ensureUsbPermission: " + devId + " - final check: " + hasIt);
+        return hasIt;
     }
 
     private static File resolveImagePath(String[] paths) {

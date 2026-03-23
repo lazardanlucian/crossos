@@ -516,6 +516,90 @@ static void request_file_picker(app_state_t *app)
     detach_env(app->android_app, did_attach);
 }
 
+static void poll_picked_files(app_state_t *app)
+{
+    JNIEnv *env;
+    int did_attach = 0;
+    jobject activity;
+    jclass activity_class;
+    jmethodID mid_consume_picked;
+    jobjectArray paths;
+    jsize count;
+
+    if (!app || !app->android_app || g_pending_pick_set)
+    {
+        return;
+    }
+    if (!get_env(app->android_app, &env, &did_attach))
+    {
+        return;
+    }
+
+    activity = app->android_app->activity->clazz;
+    activity_class = (*env)->GetObjectClass(env, activity);
+    if (!activity_class)
+    {
+        detach_env(app->android_app, did_attach);
+        return;
+    }
+
+    mid_consume_picked = (*env)->GetMethodID(env,
+                                             activity_class,
+                                             "consumePickedFiles",
+                                             "()[Ljava/lang/String;");
+    if (!mid_consume_picked)
+    {
+        (*env)->DeleteLocalRef(env, activity_class);
+        (*env)->ExceptionClear(env);
+        detach_env(app->android_app, did_attach);
+        return;
+    }
+
+    paths = (jobjectArray)(*env)->CallObjectMethod(env, activity, mid_consume_picked);
+    (*env)->DeleteLocalRef(env, activity_class);
+    if ((*env)->ExceptionCheck(env))
+    {
+        (*env)->ExceptionClear(env);
+        detach_env(app->android_app, did_attach);
+        return;
+    }
+
+    if (!paths)
+    {
+        detach_env(app->android_app, did_attach);
+        return;
+    }
+
+    g_pending_pick_count = 0;
+    count = (*env)->GetArrayLength(env, paths);
+    for (jsize i = 0; i < count && i < MAX_QUEUE; i++)
+    {
+        jstring item = (jstring)(*env)->GetObjectArrayElement(env, paths, i);
+        const char *utf;
+        if (!item)
+        {
+            continue;
+        }
+        utf = (*env)->GetStringUTFChars(env, item, NULL);
+        if (utf && utf[0] != '\0')
+        {
+            snprintf(g_pending_pick_paths[g_pending_pick_count],
+                     sizeof(g_pending_pick_paths[g_pending_pick_count]),
+                     "%s",
+                     utf);
+            g_pending_pick_count++;
+        }
+        if (utf)
+        {
+            (*env)->ReleaseStringUTFChars(env, item, utf);
+        }
+        (*env)->DeleteLocalRef(env, item);
+    }
+    (*env)->DeleteLocalRef(env, paths);
+    g_pending_pick_set = 1;
+    detach_env(app->android_app, did_attach);
+}
+
 JNIEXPORT void JNICALL
 Java_io_crossos_hello_CrossOSNativeActivity_nativeSetFilterText(JNIEnv *env,
                                                                 jclass clazz,
@@ -547,61 +631,6 @@ Java_io_crossos_hello_CrossOSNativeActivity_nativeSetFilterText(JNIEnv *env,
 
     (*env)->ReleaseStringUTFChars(env, text, utf);
     g_active_app->search_dialog_open = 0;
-}
-
-JNIEXPORT void JNICALL
-Java_io_crossos_hello_CrossOSNativeActivity_nativeSetPickedFiles(JNIEnv *env,
-                                                                 jclass clazz,
-                                                                 jobjectArray paths)
-{
-    jsize count;
-    (void)clazz;
-
-    if (!g_active_app)
-    {
-        return;
-    }
-
-    g_pending_pick_count = 0;
-
-    if (!paths)
-    {
-        g_pending_pick_set = 1;
-        return;
-    }
-
-    count = (*env)->GetArrayLength(env, paths);
-    if (count < 0)
-    {
-        g_pending_pick_set = 1;
-        return;
-    }
-
-    for (jsize i = 0; i < count && i < MAX_QUEUE; i++)
-    {
-        jstring item = (jstring)(*env)->GetObjectArrayElement(env, paths, i);
-        const char *utf;
-        if (!item)
-        {
-            continue;
-        }
-        utf = (*env)->GetStringUTFChars(env, item, NULL);
-        if (utf && utf[0] != '\0')
-        {
-            snprintf(g_pending_pick_paths[g_pending_pick_count],
-                     sizeof(g_pending_pick_paths[g_pending_pick_count]),
-                     "%s",
-                     utf);
-            g_pending_pick_count++;
-        }
-        if (utf)
-        {
-            (*env)->ReleaseStringUTFChars(env, item, utf);
-        }
-        (*env)->DeleteLocalRef(env, item);
-    }
-
-    g_pending_pick_set = 1;
 }
 
 static void init_start_directory(struct android_app *android_app, app_state_t *app)
@@ -1060,17 +1089,8 @@ static void render(app_state_t *app)
     int footer_h;
     int body_y;
     int body_h;
-    int left_w;
-    int right_w;
-    int left_x;
-    int right_x;
-    int search_h;
-    int search_y;
-    int list_y;
-    int list_h;
-    int row_h;
-    int visible[MAX_FILES];
-    int vis_count = 0;
+    int content_x;
+    int content_w;
     int drop_h;
     int q_scroll_h;
     int q_scroll_y;
@@ -1087,8 +1107,6 @@ static void render(app_state_t *app)
     int btn_h;
     char line[256];
     char hdr[96];
-    const char *filter;
-    int search_focused;
 
     if (!app->surface || crossos_surface_lock(app->surface, &fb) != CROSSOS_OK)
     {
@@ -1107,116 +1125,21 @@ static void render(app_state_t *app)
     body_y = pad + header_h + pad;
     body_h = height - body_y - footer_h - pad;
     body_h = max_i(body_h, 100 * scale);
-    left_w = (width - pad * 3) * 2 / 5;
-    left_w = max_i(left_w, 140 * scale);
-    right_w = width - pad * 3 - left_w;
-    right_w = max_i(right_w, 140 * scale);
-    left_x = pad;
-    right_x = left_x + left_w + pad;
+    content_x = pad;
+    content_w = width - pad * 2;
+    content_w = max_i(content_w, 180 * scale);
 
     crossos_draw_clear(&fb, ui.theme.bg);
     crossos_ui_panel(&ui, 0, 0, width, body_y - pad / 2, ui.theme.surface);
     crossos_ui_separator(&ui, 0, body_y - pad / 2, width);
 
     crossos_ui_label(&ui, pad + 4 * scale, pad + 4 * scale, "CrossOS Disc Burn Studio", ui.theme.text);
-    snprintf(hdr, sizeof(hdr), "%zu file(s) queued  |  %.48s", app->queue_count, app->cwd);
+    snprintf(hdr, sizeof(hdr), "%zu file(s) queued  |  tap Browse to add files", app->queue_count);
     crossos_ui_label(&ui, pad + 4 * scale, pad + 18 * scale, hdr, ui.theme.text_dim);
 
     if (app->burn_job)
     {
         crossos_ui_spinner(&ui, width - pad - 8 * scale, pad + 10 * scale, 8 * scale);
-    }
-
-    search_h = 18 * scale;
-    search_y = body_y;
-    list_y = search_y + search_h + 4 * scale;
-    list_h = body_h - search_h - 4 * scale;
-    row_h = 16 * scale;
-    list_h = max_i(list_h, row_h + 4 * scale);
-
-    search_focused = crossos_ui_text_input(&ui,
-                                           left_x,
-                                           search_y,
-                                           left_w,
-                                           search_h,
-                                           &app->search_buf,
-                                           "Filter files...");
-    if (search_focused && !app->search_focus_prev && !app->search_dialog_open)
-    {
-        request_filter_dialog(app);
-    }
-    app->search_focus_prev = search_focused;
-
-    filter = app->search_buf.buf;
-    for (size_t fi = 0; fi < app->file_count; fi++)
-    {
-        if (filter[0] == '\0')
-        {
-            visible[vis_count++] = (int)fi;
-            continue;
-        }
-        const char *name = app->files[fi].name;
-        int found = 0;
-        for (const char *p = name; *p && !found; p++)
-        {
-            int match = 1;
-            for (int k = 0; filter[k]; k++)
-            {
-                if (!*(p + k) || toupper((unsigned char)*(p + k)) != toupper((unsigned char)filter[k]))
-                {
-                    match = 0;
-                    break;
-                }
-            }
-            if (match)
-            {
-                found = 1;
-            }
-        }
-        if (found)
-        {
-            visible[vis_count++] = (int)fi;
-        }
-    }
-
-    {
-        int content_h = vis_count * row_h;
-        int scroll_off;
-
-        crossos_ui_scroll_begin(&ui, left_x, list_y, left_w, list_h, &app->file_scroll,
-                                content_h > list_h ? content_h : list_h);
-        scroll_off = (int)app->file_scroll.offset;
-        for (int vi = 0; vi < vis_count; vi++)
-        {
-            int fi = visible[vi];
-            const file_entry_t *entry = &app->files[fi];
-            int row_y = list_y + vi * row_h - scroll_off;
-            if (row_y + row_h < list_y || row_y > list_y + list_h)
-            {
-                continue;
-            }
-            snprintf(line, sizeof(line), "%s  %.40s", entry->is_dir ? "/" : " ", entry->name);
-            if (crossos_ui_selectable(&ui, left_x, row_y, left_w - 10 * scale, row_h - 1,
-                                      line, (size_t)fi == app->selected_index))
-            {
-                app->selected_index = (size_t)fi;
-                if (entry->is_dir)
-                {
-                    open_selected(app);
-                }
-                else
-                {
-                    add_selected_to_queue(app);
-                }
-            }
-        }
-        if (vis_count == 0)
-        {
-            crossos_ui_label_centered(&ui, left_x, list_y, left_w, list_h,
-                                      filter[0] ? "No matches" : "Empty folder",
-                                      ui.theme.text_dim);
-        }
-        crossos_ui_scroll_end(&ui, left_x, list_y, left_w, list_h, &app->file_scroll);
     }
 
     drop_h = 44 * scale;
@@ -1225,15 +1148,15 @@ static void render(app_state_t *app)
     q_scroll_y = body_y;
     drop_y = body_y + q_scroll_h + 4 * scale;
 
-    if (crossos_ui_drop_zone(&ui, right_x, drop_y, right_w, drop_h,
-                             "Drop files here or tap to browse", app->dragging_over))
+    if (crossos_ui_drop_zone(&ui, content_x, drop_y, content_w, drop_h,
+                             "Tap Browse to select files", app->dragging_over))
     {
         pick_files_to_queue(app);
     }
 
     q_row_h = 18 * scale;
     q_cont_h = (int)app->queue_count * q_row_h;
-    crossos_ui_scroll_begin(&ui, right_x, q_scroll_y, right_w, q_scroll_h,
+    crossos_ui_scroll_begin(&ui, content_x, q_scroll_y, content_w, q_scroll_h,
                             &app->queue_scroll, q_cont_h > q_scroll_h ? q_cont_h : q_scroll_h);
     {
         int q_off = (int)app->queue_scroll.offset;
@@ -1248,7 +1171,7 @@ static void render(app_state_t *app)
             base = strrchr(app->queue[qi], '/');
             base = base ? base + 1 : app->queue[qi];
             snprintf(line, sizeof(line), "%02zu  %s", qi + 1, base);
-            if (crossos_ui_selectable(&ui, right_x, row_y, right_w - 10 * scale, q_row_h - 1, line, 0))
+            if (crossos_ui_selectable(&ui, content_x, row_y, content_w - 10 * scale, q_row_h - 1, line, 0))
             {
                 queue_remove_at(app, qi);
                 set_status(app, "Removed from queue");
@@ -1256,12 +1179,12 @@ static void render(app_state_t *app)
         }
         if (app->queue_count == 0)
         {
-            crossos_ui_label_centered(&ui, right_x, q_scroll_y, right_w, q_scroll_h,
-                                      "Queue is empty - add files from browser or picker",
+            crossos_ui_label_centered(&ui, content_x, q_scroll_y, content_w, q_scroll_h,
+                                      "Queue is empty - tap Browse to add files",
                                       ui.theme.text_dim);
         }
     }
-    crossos_ui_scroll_end(&ui, right_x, q_scroll_y, right_w, q_scroll_h, &app->queue_scroll);
+    crossos_ui_scroll_end(&ui, content_x, q_scroll_y, content_w, q_scroll_h, &app->queue_scroll);
 
     footer_y = height - footer_h;
     crossos_ui_panel(&ui, 0, footer_y, width, footer_h, ui.theme.surface);
@@ -1316,42 +1239,19 @@ static void render(app_state_t *app)
 
         crossos_ui_layout_begin_row(&row, pad, btn_y, width - pad * 2, btn_h, 6 * scale);
 
-        if (crossos_ui_layout_row_next(&row, 58 * scale, &rect))
+        if (crossos_ui_layout_row_next(&row, 64 * scale, &rect))
         {
-            if (crossos_ui_button(&ui, rect.x, rect.y, rect.width, rect.height, "Open",
-                                  app->file_count > 0 && app->files[app->selected_index].is_dir))
-            {
-                open_selected(app);
-            }
-        }
-        if (crossos_ui_layout_row_next(&row, 48 * scale, &rect))
-        {
-            if (crossos_ui_button(&ui, rect.x, rect.y, rect.width, rect.height, "Add", app->file_count > 0))
-            {
-                add_selected_to_queue(app);
-            }
-        }
-        if (crossos_ui_layout_row_next(&row, 48 * scale, &rect))
-        {
-            if (crossos_ui_button_ghost(&ui, rect.x, rect.y, rect.width, rect.height, "Pick", 1))
+            if (crossos_ui_button_ghost(&ui, rect.x, rect.y, rect.width, rect.height, "Browse", 1))
             {
                 pick_files_to_queue(app);
             }
         }
-        if (crossos_ui_layout_row_next(&row, 40 * scale, &rect))
+        if (crossos_ui_layout_row_next(&row, 68 * scale, &rect))
         {
-            if (crossos_ui_button_ghost(&ui, rect.x, rect.y, rect.width, rect.height, "Up", 1))
+            if (crossos_ui_button_ghost(&ui, rect.x, rect.y, rect.width, rect.height, "Rescan", 1))
             {
-                go_parent(app);
-            }
-        }
-        if (crossos_ui_layout_row_next(&row, 66 * scale, &rect))
-        {
-            if (crossos_ui_button_ghost(&ui, rect.x, rect.y, rect.width, rect.height, "Refresh", 1))
-            {
-                refresh_files(app);
                 refresh_devices(app);
-                set_status(app, "Refreshed");
+                set_status(app, "Rescanned devices");
             }
         }
         if (crossos_ui_layout_row_next(&row, 60 * scale, &rect))
@@ -1588,6 +1488,7 @@ void android_main(struct android_app *android_app)
         {
             handle_event(&app, &ev);
         }
+        poll_picked_files(&app);
         if (g_pending_pick_set)
         {
             g_pending_pick_set = 0;

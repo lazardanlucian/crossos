@@ -149,6 +149,7 @@ static void handle_cmd(struct android_app *app, int32_t cmd)
     case APP_CMD_WINDOW_RESIZED:
     case APP_CMD_CONFIG_CHANGED:
         if (app->window) {
+            crossos_android_on_window_init(app->window);
             ev.type          = CROSSOS_EVENT_WINDOW_RESIZE;
             ev.resize.width  = ANativeWindow_getWidth(app->window);
             ev.resize.height = ANativeWindow_getHeight(app->window);

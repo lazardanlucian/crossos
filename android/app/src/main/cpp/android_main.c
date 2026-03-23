@@ -70,9 +70,13 @@ typedef struct app_state {
 static app_state_t *g_active_app = NULL;
 static char g_pending_filter[CROSSOS_UI_TEXT_MAX];
 static volatile int g_pending_filter_set = 0;
+static char g_pending_pick_paths[MAX_QUEUE][1024];
+static volatile int g_pending_pick_count = 0;
+static volatile int g_pending_pick_set = 0;
 
 static int ci_cmp(const char *a, const char *b);
 static void open_selected(app_state_t *app);
+static void refresh_files(app_state_t *app);
 
 static void set_status(app_state_t *app, const char *msg)
 {
@@ -423,6 +427,48 @@ static void request_filter_dialog(app_state_t *app)
     app->search_dialog_open = 1;
 }
 
+static void request_file_picker(app_state_t *app)
+{
+    JNIEnv *env;
+    int did_attach = 0;
+    jobject activity;
+    jclass activity_class;
+    jmethodID mid_show_picker;
+
+    if (!app || !app->android_app || app->ui_input.drop_count > 0 || app->queue_count >= MAX_QUEUE) {
+        return;
+    }
+    if (!get_env(app->android_app, &env, &did_attach)) {
+        return;
+    }
+
+    activity = app->android_app->activity->clazz;
+    activity_class = (*env)->GetObjectClass(env, activity);
+    if (!activity_class) {
+        detach_env(app->android_app, did_attach);
+        return;
+    }
+
+    mid_show_picker = (*env)->GetMethodID(env,
+                                          activity_class,
+                                          "showFilePicker",
+                                          "()V");
+    if (!mid_show_picker) {
+        (*env)->DeleteLocalRef(env, activity_class);
+        (*env)->ExceptionClear(env);
+        detach_env(app->android_app, did_attach);
+        return;
+    }
+
+    (*env)->CallVoidMethod(env, activity, mid_show_picker);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+    }
+
+    (*env)->DeleteLocalRef(env, activity_class);
+    detach_env(app->android_app, did_attach);
+}
+
 JNIEXPORT void JNICALL
 Java_io_crossos_hello_CrossOSNativeActivity_nativeSetFilterText(JNIEnv *env,
                                                                  jclass clazz,
@@ -453,6 +499,54 @@ Java_io_crossos_hello_CrossOSNativeActivity_nativeSetFilterText(JNIEnv *env,
     g_active_app->search_dialog_open = 0;
 }
 
+JNIEXPORT void JNICALL
+Java_io_crossos_hello_CrossOSNativeActivity_nativeSetPickedFiles(JNIEnv *env,
+                                                                 jclass clazz,
+                                                                 jobjectArray paths)
+{
+    jsize count;
+    (void)clazz;
+
+    if (!g_active_app) {
+        return;
+    }
+
+    g_pending_pick_count = 0;
+
+    if (!paths) {
+        g_pending_pick_set = 1;
+        return;
+    }
+
+    count = (*env)->GetArrayLength(env, paths);
+    if (count < 0) {
+        g_pending_pick_set = 1;
+        return;
+    }
+
+    for (jsize i = 0; i < count && i < MAX_QUEUE; i++) {
+        jstring item = (jstring)(*env)->GetObjectArrayElement(env, paths, i);
+        const char *utf;
+        if (!item) {
+            continue;
+        }
+        utf = (*env)->GetStringUTFChars(env, item, NULL);
+        if (utf && utf[0] != '\0') {
+            snprintf(g_pending_pick_paths[g_pending_pick_count],
+                     sizeof(g_pending_pick_paths[g_pending_pick_count]),
+                     "%s",
+                     utf);
+            g_pending_pick_count++;
+        }
+        if (utf) {
+            (*env)->ReleaseStringUTFChars(env, item, utf);
+        }
+        (*env)->DeleteLocalRef(env, item);
+    }
+
+    g_pending_pick_set = 1;
+}
+
 static void init_start_directory(struct android_app *android_app, app_state_t *app)
 {
     char external_dir[1024];
@@ -460,13 +554,13 @@ static void init_start_directory(struct android_app *android_app, app_state_t *a
     size_t candidate_count = 0;
 
     external_dir[0] = '\0';
-    if (get_external_files_dir(android_app, external_dir, sizeof(external_dir))) {
-        candidates[candidate_count++] = external_dir;
-    }
     candidates[candidate_count++] = "/storage/emulated/0/Download";
     candidates[candidate_count++] = "/sdcard/Download";
     candidates[candidate_count++] = "/storage/emulated/0";
     candidates[candidate_count++] = "/sdcard";
+    if (get_external_files_dir(android_app, external_dir, sizeof(external_dir))) {
+        candidates[candidate_count++] = external_dir;
+    }
     candidates[candidate_count++] = "/";
 
     for (size_t i = 0; i < candidate_count; i++) {
@@ -481,6 +575,14 @@ static void init_start_directory(struct android_app *android_app, app_state_t *a
 
 static void refresh_files(app_state_t *app)
 {
+    int keep_selected = 0;
+    char selected_path[1024];
+
+    if (app->file_count > 0 && app->selected_index < app->file_count) {
+        snprintf(selected_path, sizeof(selected_path), "%s", app->files[app->selected_index].path);
+        keep_selected = 1;
+    }
+
     app->file_count = 0;
     app->selected_index = 0;
 
@@ -518,6 +620,15 @@ static void refresh_files(app_state_t *app)
 
     closedir(dir);
     qsort(app->files, app->file_count, sizeof(app->files[0]), file_entry_cmp);
+
+    if (keep_selected) {
+        for (size_t i = 0; i < app->file_count; i++) {
+            if (strcmp(app->files[i].path, selected_path) == 0) {
+                app->selected_index = i;
+                break;
+            }
+        }
+    }
 }
 
 static void queue_remove_at(app_state_t *app, size_t index)
@@ -592,61 +703,58 @@ static void add_path_to_queue(app_state_t *app, const char *path)
 
 static void pick_files_to_queue(app_state_t *app)
 {
-    crossos_dialog_file_list_t files;
-    crossos_result_t rc;
-
-    memset(&files, 0, sizeof(files));
-    rc = crossos_dialog_pick_files("Select files to burn", 1, &files);
-    if (rc != CROSSOS_OK) {
-        if (rc == CROSSOS_ERR_UNSUPPORT) {
-            if (app->file_count > 0) {
-                const file_entry_t *entry = &app->files[app->selected_index];
-                if (entry->is_dir) {
-                    open_selected(app);
-                    set_status(app, "Opened selected folder");
-                } else {
-                    add_selected_to_queue(app);
-                }
-            } else {
-                set_status(app, "Picker unavailable. Browse storage and tap Add instead");
-            }
-        } else {
-            set_status(app, crossos_get_error());
-        }
+    if (!app) {
         return;
     }
 
-    for (size_t i = 0; i < files.count; i++) {
-        add_path_to_queue(app, files.items[i]);
+    if (app->queue_count >= MAX_QUEUE) {
+        set_status(app, "Queue full");
+        return;
     }
 
-    char msg[96];
-    snprintf(msg, sizeof(msg), "Added %zu file(s) from picker", files.count);
-    set_status(app, msg);
-    crossos_dialog_file_list_free(&files);
+    request_file_picker(app);
+    set_status(app, "Opening Android file picker...");
 }
 
 static void go_parent(app_state_t *app)
 {
+    char candidate[1024];
     size_t len = strlen(app->cwd);
     if (len == 0) {
         return;
     }
 
-    while (len > 1 && app->cwd[len - 1] == '/') {
-        app->cwd[--len] = '\0';
-    }
-    while (len > 1 && app->cwd[len - 1] != '/') {
-        app->cwd[--len] = '\0';
-    }
-    if (len > 1) {
-        app->cwd[len - 1] = '\0';
-    }
-    if (app->cwd[0] == '\0') {
-        snprintf(app->cwd, sizeof(app->cwd), "/");
+    snprintf(candidate, sizeof(candidate), "%s", app->cwd);
+
+    while (len > 1 && candidate[len - 1] == '/') {
+        candidate[--len] = '\0';
     }
 
-    refresh_files(app);
+    while (len > 1) {
+        while (len > 1 && candidate[len - 1] != '/') {
+            candidate[--len] = '\0';
+        }
+        if (len > 1) {
+            candidate[len - 1] = '\0';
+            len = strlen(candidate);
+        }
+        if (candidate[0] == '\0') {
+            snprintf(candidate, sizeof(candidate), "/");
+            len = 1;
+        }
+
+        if (dir_is_readable(candidate)) {
+            snprintf(app->cwd, sizeof(app->cwd), "%s", candidate);
+            refresh_files(app);
+            return;
+        }
+
+        if (strcmp(candidate, "/") == 0) {
+            break;
+        }
+    }
+
+    set_status(app, "Cannot access parent folder from this location");
 }
 
 static void open_selected(app_state_t *app)
@@ -666,8 +774,18 @@ static void open_selected(app_state_t *app)
         return;
     }
 
+    if (!dir_is_readable(entry->path)) {
+        set_status(app, "Cannot open selected folder");
+        return;
+    }
+
     snprintf(app->cwd, sizeof(app->cwd), "%s", entry->path);
     refresh_files(app);
+}
+
+static int max_i(int a, int b)
+{
+    return a > b ? a : b;
 }
 
 static void start_burn(app_state_t *app)
@@ -806,8 +924,11 @@ static void render(app_state_t *app)
     footer_h = 72 * scale;
     body_y = pad + header_h + pad;
     body_h = height - body_y - footer_h - pad;
+    body_h = max_i(body_h, 100 * scale);
     left_w = (width - pad * 3) * 2 / 5;
+    left_w = max_i(left_w, 140 * scale);
     right_w = width - pad * 3 - left_w;
+    right_w = max_i(right_w, 140 * scale);
     left_x = pad;
     right_x = left_x + left_w + pad;
 
@@ -828,6 +949,7 @@ static void render(app_state_t *app)
     list_y = search_y + search_h + 4 * scale;
     list_h = body_h - search_h - 4 * scale;
     row_h = 16 * scale;
+    list_h = max_i(list_h, row_h + 4 * scale);
 
     search_focused = crossos_ui_text_input(&ui,
                                            left_x,
@@ -901,6 +1023,7 @@ static void render(app_state_t *app)
 
     drop_h = 44 * scale;
     q_scroll_h = body_h - drop_h - 4 * scale;
+    q_scroll_h = max_i(q_scroll_h, 44 * scale);
     q_scroll_y = body_y;
     drop_y = body_y + q_scroll_h + 4 * scale;
 
@@ -969,6 +1092,7 @@ static void render(app_state_t *app)
 
     prog_x = dev_x + dev_w + pad;
     prog_w = width / 2 - dev_w - pad * 2;
+    prog_w = max_i(prog_w, 80 * scale);
     snprintf(line, sizeof(line), "%s  %.1f%%  %.1f MiB/s",
              burn_state_name(app->burn.state), app->burn.percent, app->burn.speed_mib_s);
     crossos_ui_label(&ui, prog_x, dev_y, line, ui.theme.text);
@@ -1188,6 +1312,22 @@ void android_main(struct android_app *android_app)
         }
         while (crossos_poll_event(&ev)) {
             handle_event(&app, &ev);
+        }
+        if (g_pending_pick_set) {
+            g_pending_pick_set = 0;
+            if (g_pending_pick_count > 0) {
+                for (int i = 0; i < g_pending_pick_count; i++) {
+                    add_path_to_queue(&app, g_pending_pick_paths[i]);
+                }
+                {
+                    char msg[96];
+                    snprintf(msg, sizeof(msg), "Added %d file(s) from Android picker", g_pending_pick_count);
+                    set_status(&app, msg);
+                }
+            } else {
+                set_status(&app, "No files selected");
+            }
+            g_pending_pick_count = 0;
         }
         if (crossos_android_poll_usb_changed()) {
             refresh_devices(&app);

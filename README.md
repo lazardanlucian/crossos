@@ -126,17 +126,18 @@ cmake --build build-android
 # Produces libcrossos.a; link it into an Android NativeActivity project.
 ```
 
-### Android APK (hello app in this repo)
+### Android APKs (disc burner + hello world)
 
 ```bash
 cd android
 ./gradlew assembleDebug
-# APK output:
-# android/app/build/outputs/apk/debug/app-debug.apk
+# APK outputs:
+# android/app/build/outputs/apk/discBurner/debug/app-discBurner-debug.apk
+# android/app/build/outputs/apk/helloWorld/debug/app-helloWorld-debug.apk
 ```
 
 If you are in Codespaces, use the file explorer to download
-`android/app/build/outputs/apk/debug/app-debug.apk` and install it on your device.
+both APKs from `android/app/build/outputs/apk/...` and install them on your device.
 
 ---
 
@@ -236,6 +237,16 @@ What it runs by default:
 - Windows cross-compile build (mingw toolchain)
 - Android NDK CMake build (`libcrossos.a`)
 - Android Gradle APK build (`assembleDebug`)
+
+Binary artifact outputs:
+
+- `artifacts/linux/` (Linux executables)
+- `artifacts/windows/` (`*.exe` files)
+
+APK artifact outputs:
+
+- `artifacts/android-apk/disc_burner.apk`
+- `artifacts/android-apk/hello_world.apk`
 
 Useful options:
 

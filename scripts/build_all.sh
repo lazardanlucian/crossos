@@ -7,6 +7,7 @@ BUILD_TYPE="${BUILD_TYPE:-Release}"
 ANDROID_ABI="${ANDROID_ABI:-arm64-v8a}"
 ANDROID_PLATFORM="${ANDROID_PLATFORM:-android-26}"
 ANDROID_NDK="${ANDROID_NDK:-/opt/android-ndk}"
+ARTIFACTS_DIR="$ROOT_DIR/artifacts"
 
 RUN_LINUX=1
 RUN_WINDOWS=1
@@ -75,6 +76,7 @@ mark_result() {
 run_linux() {
     local stage="linux"
     local build_dir="$ROOT_DIR/build"
+    local artifacts_dir="$ARTIFACTS_DIR/linux"
 
     log_stage "Linux build"
     require_cmd cmake || return 1
@@ -86,12 +88,35 @@ run_linux() {
     run_cmd cmake -S "$ROOT_DIR" -B "$build_dir" -DCMAKE_BUILD_TYPE="$BUILD_TYPE" -DCROSSOS_BUILD_TESTS=ON || return 1
     run_cmd cmake --build "$build_dir" || return 1
     run_cmd ctest --test-dir "$build_dir" --output-on-failure || return 1
+
+    if [ "$CLEAN" -eq 1 ]; then
+        rm -rf "$artifacts_dir"
+    fi
+
+    run_cmd mkdir -p "$artifacts_dir" || return 1
+
+    local found=0
+    local bin
+    for bin in "$build_dir"/*; do
+        if [ -f "$bin" ] && [ -x "$bin" ]; then
+            run_cmd cp "$bin" "$artifacts_dir/" || return 1
+            found=1
+        fi
+    done
+
+    if [ "$found" -eq 0 ]; then
+        echo "[ERROR] No Linux executables found in $build_dir"
+        return 1
+    fi
+
+    echo "Linux artifacts: $artifacts_dir"
     return 0
 }
 
 run_windows() {
     local stage="windows"
     local build_dir="$ROOT_DIR/build-win"
+    local artifacts_dir="$ARTIFACTS_DIR/windows"
 
     log_stage "Windows (mingw) build"
     require_cmd cmake || return 1
@@ -104,7 +129,40 @@ run_windows() {
         -DCMAKE_TOOLCHAIN_FILE="$ROOT_DIR/cmake/toolchain-mingw64.cmake" \
         -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
         -DCROSSOS_BUILD_TESTS=OFF || return 1
-    run_cmd cmake --build "$build_dir" || return 1
+
+    local build_code=0
+    run_cmd cmake --build "$build_dir" || build_code=$?
+
+    if [ "$CLEAN" -eq 1 ]; then
+        rm -rf "$artifacts_dir"
+    fi
+
+    run_cmd mkdir -p "$artifacts_dir" || return 1
+
+    local found=0
+    local bin
+    for bin in "$build_dir"/*.exe; do
+        if [ -f "$bin" ]; then
+            run_cmd cp "$bin" "$artifacts_dir/" || return 1
+            found=1
+        fi
+    done
+
+    if [ "$found" -eq 0 ]; then
+        echo "[ERROR] No Windows executables found in $build_dir"
+        if [ "$build_code" -ne 0 ]; then
+            return "$build_code"
+        fi
+        return 1
+    fi
+
+    echo "Windows artifacts: $artifacts_dir"
+
+    if [ "$build_code" -ne 0 ]; then
+        echo "[WARN] Windows build had failures; copied available executables."
+        return "$build_code"
+    fi
+
     return 0
 }
 
@@ -139,19 +197,42 @@ run_android_ndk() {
 run_android_apk() {
     local stage="android-apk"
     local android_dir="$ROOT_DIR/android"
+    local apk_artifacts_dir="$ROOT_DIR/artifacts/android-apk"
+    local disc_apk_source="$android_dir/app/build/outputs/apk/discBurner/debug/app-discBurner-debug.apk"
+    local hello_apk_source="$android_dir/app/build/outputs/apk/helloWorld/debug/app-helloWorld-debug.apk"
+    local disc_apk_artifact="$apk_artifacts_dir/disc_burner.apk"
+    local hello_apk_artifact="$apk_artifacts_dir/hello_world.apk"
 
     log_stage "Android APK build"
     require_cmd bash || return 1
 
-    if [ ! -x "$android_dir/gradlew" ]; then
-        chmod +x "$android_dir/gradlew" || return 1
+    if [ ! -f "$android_dir/gradlew" ]; then
+        echo "[ERROR] Missing Gradle wrapper: $android_dir/gradlew"
+        return 1
     fi
 
     if [ "$CLEAN" -eq 1 ]; then
-        run_cmd "$android_dir/gradlew" -p "$android_dir" clean || return 1
+        run_cmd bash "$android_dir/gradlew" -p "$android_dir" clean || return 1
     fi
 
-    run_cmd "$android_dir/gradlew" -p "$android_dir" assembleDebug || return 1
+    run_cmd bash "$android_dir/gradlew" -p "$android_dir" assembleDiscBurnerDebug || return 1
+    run_cmd bash "$android_dir/gradlew" -p "$android_dir" assembleHelloWorldDebug || return 1
+
+    if [ ! -f "$disc_apk_source" ]; then
+        echo "[ERROR] Disc burner APK not found after build: $disc_apk_source"
+        return 1
+    fi
+
+    if [ ! -f "$hello_apk_source" ]; then
+        echo "[ERROR] Hello world APK not found after build: $hello_apk_source"
+        return 1
+    fi
+
+    run_cmd mkdir -p "$apk_artifacts_dir" || return 1
+    run_cmd rm -f "$apk_artifacts_dir/app-debug.apk" || return 1
+    run_cmd cp "$disc_apk_source" "$disc_apk_artifact" || return 1
+    run_cmd cp "$hello_apk_source" "$hello_apk_artifact" || return 1
+    echo "APK artifacts: $disc_apk_artifact, $hello_apk_artifact"
     return 0
 }
 

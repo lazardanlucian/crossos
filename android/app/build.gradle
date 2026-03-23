@@ -5,9 +5,10 @@ plugins {
 android {
     namespace 'io.crossos.hello'
     compileSdk 34
+    flavorDimensions 'app'
 
     defaultConfig {
-        applicationId 'io.crossos.hello'
+        applicationId 'io.crossos'
         minSdk 26
         targetSdk 34
         versionCode 1
@@ -16,6 +17,38 @@ android {
         externalNativeBuild {
             cmake {
                 arguments '-DANDROID_STL=c++_static'
+            }
+        }
+    }
+
+    productFlavors {
+        discBurner {
+            dimension 'app'
+            applicationId 'io.crossos.discburner'
+            manifestPlaceholders = [
+                appLabel: 'CrossOS Disc Burner',
+                nativeLibName: 'crossos_disc_burner'
+            ]
+            externalNativeBuild {
+                cmake {
+                    arguments '-DCROSSOS_ANDROID_APP=disc_burner'
+                    targets 'crossos_disc_burner'
+                }
+            }
+        }
+
+        helloWorld {
+            dimension 'app'
+            applicationId 'io.crossos.helloworld'
+            manifestPlaceholders = [
+                appLabel: 'CrossOS Hello World',
+                nativeLibName: 'crossos_hello_world'
+            ]
+            externalNativeBuild {
+                cmake {
+                    arguments '-DCROSSOS_ANDROID_APP=hello_world'
+                    targets 'crossos_hello_world'
+                }
             }
         }
     }

@@ -5,7 +5,7 @@
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
 
     <application
-        android:label="CrossOS Disc Burner"
+        android:label="${appLabel}"
         android:hasCode="true"
         android:allowBackup="true"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
@@ -16,7 +16,7 @@
             android:configChanges="orientation|keyboardHidden|screenSize">
             <meta-data
                 android:name="android.app.lib_name"
-                android:value="crossos_hello" />
+                android:value="${nativeLibName}" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

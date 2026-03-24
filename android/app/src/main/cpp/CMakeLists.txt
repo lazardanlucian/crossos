@@ -46,3 +46,18 @@ target_link_libraries(crossos_hello_world PRIVATE
     android
     log
 )
+
+add_library(crossos_film_scanner SHARED
+    android_scanner_main.c
+    ${CMAKE_ANDROID_NDK}/sources/android/native_app_glue/android_native_app_glue.c
+)
+
+target_include_directories(crossos_film_scanner PRIVATE
+    ${CMAKE_ANDROID_NDK}/sources/android/native_app_glue
+)
+
+target_link_libraries(crossos_film_scanner PRIVATE
+    crossos
+    android
+    log
+)

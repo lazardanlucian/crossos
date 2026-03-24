@@ -97,7 +97,17 @@ run_linux() {
 
     local found=0
     local bin
+
+    # Top-level executables (if any)
     for bin in "$build_dir"/*; do
+        if [ -f "$bin" ] && [ -x "$bin" ]; then
+            run_cmd cp "$bin" "$artifacts_dir/" || return 1
+            found=1
+        fi
+    done
+
+    # Example app executables are emitted under build/examples/<app>/<app>
+    for bin in "$build_dir"/examples/*/*; do
         if [ -f "$bin" ] && [ -x "$bin" ]; then
             run_cmd cp "$bin" "$artifacts_dir/" || return 1
             found=1
@@ -141,7 +151,17 @@ run_windows() {
 
     local found=0
     local bin
+
+    # Top-level Windows executables (if any)
     for bin in "$build_dir"/*.exe; do
+        if [ -f "$bin" ]; then
+            run_cmd cp "$bin" "$artifacts_dir/" || return 1
+            found=1
+        fi
+    done
+
+    # Example app executables under build-win/examples/<app>/<app>.exe
+    for bin in "$build_dir"/examples/*/*.exe; do
         if [ -f "$bin" ]; then
             run_cmd cp "$bin" "$artifacts_dir/" || return 1
             found=1
@@ -200,8 +220,10 @@ run_android_apk() {
     local apk_artifacts_dir="$ROOT_DIR/artifacts/android-apk"
     local disc_apk_source="$android_dir/app/build/outputs/apk/discBurner/debug/app-discBurner-debug.apk"
     local hello_apk_source="$android_dir/app/build/outputs/apk/helloWorld/debug/app-helloWorld-debug.apk"
+    local scanner_apk_source="$android_dir/app/build/outputs/apk/filmScanner/debug/app-filmScanner-debug.apk"
     local disc_apk_artifact="$apk_artifacts_dir/disc_burner.apk"
     local hello_apk_artifact="$apk_artifacts_dir/hello_world.apk"
+    local scanner_apk_artifact="$apk_artifacts_dir/film_scanner.apk"
 
     log_stage "Android APK build"
     require_cmd bash || return 1
@@ -217,6 +239,7 @@ run_android_apk() {
 
     run_cmd bash "$android_dir/gradlew" -p "$android_dir" assembleDiscBurnerDebug || return 1
     run_cmd bash "$android_dir/gradlew" -p "$android_dir" assembleHelloWorldDebug || return 1
+    run_cmd bash "$android_dir/gradlew" -p "$android_dir" assembleFilmScannerDebug || return 1
 
     if [ ! -f "$disc_apk_source" ]; then
         echo "[ERROR] Disc burner APK not found after build: $disc_apk_source"
@@ -228,11 +251,17 @@ run_android_apk() {
         return 1
     fi
 
+    if [ ! -f "$scanner_apk_source" ]; then
+        echo "[ERROR] Film scanner APK not found after build: $scanner_apk_source"
+        return 1
+    fi
+
     run_cmd mkdir -p "$apk_artifacts_dir" || return 1
     run_cmd rm -f "$apk_artifacts_dir/app-debug.apk" || return 1
     run_cmd cp "$disc_apk_source" "$disc_apk_artifact" || return 1
     run_cmd cp "$hello_apk_source" "$hello_apk_artifact" || return 1
-    echo "APK artifacts: $disc_apk_artifact, $hello_apk_artifact"
+    run_cmd cp "$scanner_apk_source" "$scanner_apk_artifact" || return 1
+    echo "APK artifacts: $disc_apk_artifact, $hello_apk_artifact, $scanner_apk_artifact"
     return 0
 }
 

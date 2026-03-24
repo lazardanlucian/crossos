@@ -51,6 +51,21 @@ android {
                 }
             }
         }
+
+        filmScanner {
+            dimension 'app'
+            applicationId 'io.crossos.filmscanner'
+            manifestPlaceholders = [
+                appLabel: 'CrossOS Film Scanner',
+                nativeLibName: 'crossos_film_scanner'
+            ]
+            externalNativeBuild {
+                cmake {
+                    arguments '-DCROSSOS_ANDROID_APP=film_scanner'
+                    targets 'crossos_film_scanner'
+                }
+            }
+        }
     }
 
     buildTypes {

@@ -11,13 +11,17 @@
 #ifdef _WIN32
 
 #ifndef WIN32_LEAN_AND_MEAN
-#  define WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
 #endif
 
 #include <windows.h>
 #include <winsock2.h>
 #include <ws2bth.h>
+#if defined(__MINGW32__) || defined(__MINGW64__)
+#include <bluetoothapis.h>
+#else
 #include <BluetoothAPIs.h>
+#endif
 
 #include <crossos/bluetooth.h>
 
@@ -30,7 +34,8 @@
 
 /* ── Socket handle ────────────────────────────────────────────────────── */
 
-struct crossos_bt_socket {
+struct crossos_bt_socket
+{
     SOCKET fd;
 };
 
@@ -55,7 +60,8 @@ static BTH_ADDR str_to_bthaddr(const char *str)
     sscanf(str, "%x:%x:%x:%x:%x:%x",
            &b[0], &b[1], &b[2], &b[3], &b[4], &b[5]);
     BTH_ADDR addr = 0;
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < 6; i++)
+    {
         addr = (addr << 8) | (b[i] & 0xFF);
     }
     return addr;
@@ -65,52 +71,60 @@ static BTH_ADDR str_to_bthaddr(const char *str)
 
 crossos_result_t bt_platform_init(void)
 {
-    if (s_initialised) return CROSSOS_OK;
+    if (s_initialised)
+        return CROSSOS_OK;
     WSADATA wsd;
-    if (WSAStartup(MAKEWORD(2, 2), &wsd) != 0) return CROSSOS_ERR_BLUETOOTH;
+    if (WSAStartup(MAKEWORD(2, 2), &wsd) != 0)
+        return CROSSOS_ERR_BLUETOOTH;
     s_initialised = 1;
     return CROSSOS_OK;
 }
 
 void bt_platform_shutdown(void)
 {
-    if (!s_initialised) return;
+    if (!s_initialised)
+        return;
     WSACleanup();
     s_initialised = 0;
 }
 
 int bt_platform_is_available(void)
 {
-    if (!s_initialised) return 0;
+    if (!s_initialised)
+        return 0;
     /* Try to open a BT socket – if it fails there is no adapter. */
     SOCKET test = socket(AF_BTH, SOCK_STREAM, BTHPROTO_RFCOMM);
-    if (test == INVALID_SOCKET) return 0;
+    if (test == INVALID_SOCKET)
+        return 0;
     closesocket(test);
     return 1;
 }
 
 crossos_result_t bt_platform_scan_start(crossos_bt_scan_cb_t cb, void *user)
 {
-    if (!cb) return CROSSOS_ERR_PARAM;
+    if (!cb)
+        return CROSSOS_ERR_PARAM;
 
     BLUETOOTH_DEVICE_SEARCH_PARAMS params;
     memset(&params, 0, sizeof(params));
-    params.dwSize               = sizeof(params);
+    params.dwSize = sizeof(params);
     params.fReturnAuthenticated = TRUE;
-    params.fReturnRemembered    = TRUE;
-    params.fReturnUnknown       = TRUE;
-    params.fReturnConnected     = TRUE;
-    params.fIssueInquiry        = TRUE;
-    params.cTimeoutMultiplier   = 4;  /* ~5 seconds inquiry */
+    params.fReturnRemembered = TRUE;
+    params.fReturnUnknown = TRUE;
+    params.fReturnConnected = TRUE;
+    params.fIssueInquiry = TRUE;
+    params.cTimeoutMultiplier = 4; /* ~5 seconds inquiry */
 
     BLUETOOTH_DEVICE_INFO info;
     memset(&info, 0, sizeof(info));
     info.dwSize = sizeof(info);
 
     HBLUETOOTH_DEVICE_FIND hFind = BluetoothFindFirstDevice(&params, &info);
-    if (hFind == NULL) return CROSSOS_OK; /* no devices found, not an error */
+    if (hFind == NULL)
+        return CROSSOS_OK; /* no devices found, not an error */
 
-    do {
+    do
+    {
         crossos_bt_device_t dev;
         memset(&dev, 0, sizeof(dev));
 
@@ -120,9 +134,9 @@ crossos_result_t bt_platform_scan_start(crossos_bt_scan_cb_t cb, void *user)
                             dev.name, (int)sizeof(dev.name) - 1,
                             NULL, NULL);
         ba_to_str(&info.Address, dev.address);
-        dev.is_paired    = info.fAuthenticated ? 1 : 0;
-        dev.is_connected = info.fConnected      ? 1 : 0;
-        dev.rssi         = 0; /* WinBT API doesn't expose RSSI here */
+        dev.is_paired = info.fAuthenticated ? 1 : 0;
+        dev.is_connected = info.fConnected ? 1 : 0;
+        dev.rssi = 0; /* WinBT API doesn't expose RSSI here */
 
         cb(&dev, user);
     } while (BluetoothFindNextDevice(hFind, &info));
@@ -138,14 +152,15 @@ void bt_platform_scan_stop(void)
 
 int bt_platform_get_paired(crossos_bt_device_t *out, int max)
 {
-    if (!out || max <= 0) return 0;
+    if (!out || max <= 0)
+        return 0;
 
     BLUETOOTH_DEVICE_SEARCH_PARAMS params;
     memset(&params, 0, sizeof(params));
-    params.dwSize               = sizeof(params);
+    params.dwSize = sizeof(params);
     params.fReturnAuthenticated = TRUE;
-    params.fReturnRemembered    = TRUE;
-    params.fIssueInquiry        = FALSE;
+    params.fReturnRemembered = TRUE;
+    params.fIssueInquiry = FALSE;
 
     BLUETOOTH_DEVICE_INFO info;
     memset(&info, 0, sizeof(info));
@@ -153,17 +168,20 @@ int bt_platform_get_paired(crossos_bt_device_t *out, int max)
 
     int count = 0;
     HBLUETOOTH_DEVICE_FIND hFind = BluetoothFindFirstDevice(&params, &info);
-    if (!hFind) return 0;
+    if (!hFind)
+        return 0;
 
-    do {
-        if (count >= max) break;
+    do
+    {
+        if (count >= max)
+            break;
         memset(&out[count], 0, sizeof(out[count]));
         WideCharToMultiByte(CP_UTF8, 0,
                             info.szName, -1,
                             out[count].name, (int)sizeof(out[count].name) - 1,
                             NULL, NULL);
         ba_to_str(&info.Address, out[count].address);
-        out[count].is_paired    = 1;
+        out[count].is_paired = 1;
         out[count].is_connected = info.fConnected ? 1 : 0;
         count++;
     } while (BluetoothFindNextDevice(hFind, &info));
@@ -172,35 +190,42 @@ int bt_platform_get_paired(crossos_bt_device_t *out, int max)
     return count;
 }
 
-crossos_result_t bt_platform_connect(const char          *addr,
-                                     uint8_t              channel,
+crossos_result_t bt_platform_connect(const char *addr,
+                                     uint8_t channel,
                                      crossos_bt_socket_t **out_sock)
 {
     SOCKET fd = socket(AF_BTH, SOCK_STREAM, BTHPROTO_RFCOMM);
-    if (fd == INVALID_SOCKET) return CROSSOS_ERR_BLUETOOTH;
+    if (fd == INVALID_SOCKET)
+        return CROSSOS_ERR_BLUETOOTH;
 
     SOCKADDR_BTH sa;
     memset(&sa, 0, sizeof(sa));
     sa.addressFamily = AF_BTH;
-    sa.btAddr        = str_to_bthaddr(addr);
+    sa.btAddr = str_to_bthaddr(addr);
     sa.serviceClassId = RFCOMM_PROTOCOL_UUID;
-    sa.port          = channel;
+    sa.port = channel;
 
-    if (connect(fd, (SOCKADDR *)&sa, sizeof(sa)) != 0) {
+    if (connect(fd, (SOCKADDR *)&sa, sizeof(sa)) != 0)
+    {
         closesocket(fd);
         return CROSSOS_ERR_BLUETOOTH;
     }
 
     struct crossos_bt_socket *s = malloc(sizeof(*s));
-    if (!s) { closesocket(fd); return CROSSOS_ERR_OOM; }
-    s->fd    = fd;
+    if (!s)
+    {
+        closesocket(fd);
+        return CROSSOS_ERR_OOM;
+    }
+    s->fd = fd;
     *out_sock = s;
     return CROSSOS_OK;
 }
 
 void bt_platform_disconnect(crossos_bt_socket_t *sock)
 {
-    if (!sock) return;
+    if (!sock)
+        return;
     closesocket(sock->fd);
     free(sock);
 }
@@ -210,8 +235,10 @@ crossos_result_t bt_platform_send(crossos_bt_socket_t *sock,
                                   size_t *out_sent)
 {
     int n = send(sock->fd, (const char *)data, (int)len, 0);
-    if (n < 0) return CROSSOS_ERR_BLUETOOTH;
-    if (out_sent) *out_sent = (size_t)n;
+    if (n < 0)
+        return CROSSOS_ERR_BLUETOOTH;
+    if (out_sent)
+        *out_sent = (size_t)n;
     return CROSSOS_OK;
 }
 
@@ -219,7 +246,8 @@ crossos_result_t bt_platform_recv(crossos_bt_socket_t *sock,
                                   void *buf, size_t buf_len,
                                   size_t *out_recv, int nonblocking)
 {
-    if (nonblocking) {
+    if (nonblocking)
+    {
         /* Set non-blocking temporarily */
         u_long mode = 1;
         ioctlsocket(sock->fd, FIONBIO, &mode);
@@ -227,20 +255,25 @@ crossos_result_t bt_platform_recv(crossos_bt_socket_t *sock,
 
     int n = recv(sock->fd, (char *)buf, (int)buf_len, 0);
 
-    if (nonblocking) {
+    if (nonblocking)
+    {
         u_long mode = 0;
         ioctlsocket(sock->fd, FIONBIO, &mode);
     }
 
-    if (n < 0) {
+    if (n < 0)
+    {
         int err = WSAGetLastError();
-        if (nonblocking && (err == WSAEWOULDBLOCK)) {
-            if (out_recv) *out_recv = 0;
+        if (nonblocking && (err == WSAEWOULDBLOCK))
+        {
+            if (out_recv)
+                *out_recv = 0;
             return CROSSOS_OK;
         }
         return CROSSOS_ERR_BLUETOOTH;
     }
-    if (out_recv) *out_recv = (size_t)n;
+    if (out_recv)
+        *out_recv = (size_t)n;
     return CROSSOS_OK;
 }
 

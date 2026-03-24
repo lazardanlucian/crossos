@@ -36,10 +36,13 @@
 
 /* ── Camera handle (opaque on this platform) ────────────────────────── */
 
-struct crossos_camera {
+struct crossos_camera
+{
     crossos_camera_info_t info;
-    int                   streaming;
+    int streaming;
 };
+
+static void camera_platform_stop(crossos_camera_t *cam);
 
 /* ── Platform API ───────────────────────────────────────────────────── */
 
@@ -59,7 +62,8 @@ void camera_platform_shutdown(void)
 
 int camera_platform_enumerate(crossos_camera_info_t *out, int max)
 {
-    (void)out; (void)max;
+    (void)out;
+    (void)max;
     /*
      * Full implementation:
      *   ACameraIdList *list;
@@ -73,13 +77,15 @@ int camera_platform_enumerate(crossos_camera_info_t *out, int max)
 
 crossos_result_t camera_platform_open(int idx, crossos_camera_t **out)
 {
-    (void)idx; (void)out;
+    (void)idx;
+    (void)out;
     return CROSSOS_ERR_UNSUPPORT;
 }
 
 void camera_platform_close(crossos_camera_t *cam)
 {
-    if (!cam) return;
+    if (!cam)
+        return;
     camera_platform_stop(cam);
     free(cam);
 }
@@ -92,31 +98,35 @@ crossos_result_t camera_platform_start(crossos_camera_t *cam)
 
 void camera_platform_stop(crossos_camera_t *cam)
 {
-    if (!cam) return;
+    if (!cam)
+        return;
     cam->streaming = 0;
 }
 
-crossos_result_t camera_platform_capture_frame(crossos_camera_t       *cam,
+crossos_result_t camera_platform_capture_frame(crossos_camera_t *cam,
                                                crossos_camera_frame_t *out)
 {
-    (void)cam; (void)out;
+    (void)cam;
+    (void)out;
     return CROSSOS_ERR_UNSUPPORT;
 }
 
-void camera_platform_release_frame(crossos_camera_t       *cam,
+void camera_platform_release_frame(crossos_camera_t *cam,
                                    crossos_camera_frame_t *frame)
 {
     (void)cam;
-    if (frame) {
-        frame->pixels        = NULL;
+    if (frame)
+    {
+        frame->pixels = NULL;
         frame->platform_data = NULL;
     }
 }
 
 crossos_result_t camera_platform_get_info(const crossos_camera_t *cam,
-                                           crossos_camera_info_t  *out)
+                                          crossos_camera_info_t *out)
 {
-    if (!cam || !out) return CROSSOS_ERR_PARAM;
+    if (!cam || !out)
+        return CROSSOS_ERR_PARAM;
     *out = cam->info;
     return CROSSOS_OK;
 }

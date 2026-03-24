@@ -3,19 +3,23 @@
 #include <stdlib.h>
 #include <string.h>
 
-struct crossos_renderer {
-    crossos_window_t         *win;
-    crossos_surface_t        *surface;
-    crossos_render_backend_t  backend;
-    crossos_renderer_caps_t   caps;
-    int                       frame_open;
+extern void crossos__set_error(const char *fmt, ...);
+
+struct crossos_renderer
+{
+    crossos_window_t *win;
+    crossos_surface_t *surface;
+    crossos_render_backend_t backend;
+    crossos_renderer_caps_t caps;
+    int frame_open;
 };
 
 static void set_caps_for_backend(crossos_render_backend_t backend,
                                  crossos_renderer_caps_t *caps)
 {
     memset(caps, 0, sizeof(*caps));
-    switch (backend) {
+    switch (backend)
+    {
     case CROSSOS_RENDER_BACKEND_SOFTWARE:
         caps->is_hardware_accelerated = 0;
         caps->supports_compute = 0;
@@ -35,28 +39,67 @@ static void set_caps_for_backend(crossos_render_backend_t backend,
     }
 }
 
-crossos_result_t crossos_renderer_create(crossos_window_t          *win,
-                                         crossos_render_backend_t   preferred,
-                                         crossos_renderer_t       **out_renderer)
+int crossos_renderer_backend_is_available(crossos_render_backend_t backend)
 {
-    if (!win || !out_renderer) return CROSSOS_ERR_PARAM;
+    switch (backend)
+    {
+    case CROSSOS_RENDER_BACKEND_SOFTWARE:
+        return 1;
+    case CROSSOS_RENDER_BACKEND_OPENGL:
+    case CROSSOS_RENDER_BACKEND_VULKAN:
+        return 0;
+    case CROSSOS_RENDER_BACKEND_AUTO:
+    default:
+        return 1;
+    }
+}
+
+crossos_render_backend_t crossos_renderer_select_backend(crossos_render_backend_t preferred)
+{
+    if (preferred == CROSSOS_RENDER_BACKEND_AUTO)
+    {
+        if (crossos_renderer_backend_is_available(CROSSOS_RENDER_BACKEND_VULKAN))
+            return CROSSOS_RENDER_BACKEND_VULKAN;
+        if (crossos_renderer_backend_is_available(CROSSOS_RENDER_BACKEND_OPENGL))
+            return CROSSOS_RENDER_BACKEND_OPENGL;
+        return CROSSOS_RENDER_BACKEND_SOFTWARE;
+    }
+
+    if (crossos_renderer_backend_is_available(preferred))
+        return preferred;
+
+    return CROSSOS_RENDER_BACKEND_SOFTWARE;
+}
+
+crossos_result_t crossos_renderer_create(crossos_window_t *win,
+                                         crossos_render_backend_t preferred,
+                                         crossos_renderer_t **out_renderer)
+{
+    if (!win || !out_renderer)
+        return CROSSOS_ERR_PARAM;
 
     *out_renderer = NULL;
 
-    crossos_render_backend_t selected = preferred;
-    if (selected == CROSSOS_RENDER_BACKEND_AUTO) {
-        selected = CROSSOS_RENDER_BACKEND_SOFTWARE;
+    crossos_render_backend_t selected = crossos_renderer_select_backend(preferred);
+
+    if (selected != preferred && preferred != CROSSOS_RENDER_BACKEND_AUTO)
+    {
+        crossos__set_error("renderer backend unavailable; fell back to software");
     }
 
-    if (selected != CROSSOS_RENDER_BACKEND_SOFTWARE) {
+    if (selected != CROSSOS_RENDER_BACKEND_SOFTWARE)
+    {
+        crossos__set_error("selected renderer backend not implemented yet");
         return CROSSOS_ERR_UNSUPPORT;
     }
 
     crossos_surface_t *surface = crossos_surface_get(win);
-    if (!surface) return CROSSOS_ERR_DISPLAY;
+    if (!surface)
+        return CROSSOS_ERR_DISPLAY;
 
     crossos_renderer_t *renderer = (crossos_renderer_t *)malloc(sizeof(*renderer));
-    if (!renderer) return CROSSOS_ERR_OOM;
+    if (!renderer)
+        return CROSSOS_ERR_OOM;
 
     renderer->win = win;
     renderer->surface = surface;
@@ -70,9 +113,11 @@ crossos_result_t crossos_renderer_create(crossos_window_t          *win,
 
 void crossos_renderer_destroy(crossos_renderer_t *renderer)
 {
-    if (!renderer) return;
+    if (!renderer)
+        return;
 
-    if (renderer->frame_open && renderer->backend == CROSSOS_RENDER_BACKEND_SOFTWARE) {
+    if (renderer->frame_open && renderer->backend == CROSSOS_RENDER_BACKEND_SOFTWARE)
+    {
         crossos_surface_unlock(renderer->surface);
         renderer->frame_open = 0;
     }
@@ -82,35 +127,44 @@ void crossos_renderer_destroy(crossos_renderer_t *renderer)
 
 crossos_render_backend_t crossos_renderer_backend(const crossos_renderer_t *renderer)
 {
-    if (!renderer) return CROSSOS_RENDER_BACKEND_AUTO;
+    if (!renderer)
+        return CROSSOS_RENDER_BACKEND_AUTO;
     return renderer->backend;
 }
 
 crossos_result_t crossos_renderer_get_caps(const crossos_renderer_t *renderer,
-                                           crossos_renderer_caps_t   *out_caps)
+                                           crossos_renderer_caps_t *out_caps)
 {
-    if (!renderer || !out_caps) return CROSSOS_ERR_PARAM;
+    if (!renderer || !out_caps)
+        return CROSSOS_ERR_PARAM;
     *out_caps = renderer->caps;
     return CROSSOS_OK;
 }
 
-crossos_result_t crossos_renderer_begin_software_frame(crossos_renderer_t    *renderer,
+crossos_result_t crossos_renderer_begin_software_frame(crossos_renderer_t *renderer,
                                                        crossos_framebuffer_t *out_fb)
 {
-    if (!renderer || !out_fb) return CROSSOS_ERR_PARAM;
-    if (renderer->backend != CROSSOS_RENDER_BACKEND_SOFTWARE) return CROSSOS_ERR_UNSUPPORT;
-    if (renderer->frame_open) return CROSSOS_ERR_PARAM;
+    if (!renderer || !out_fb)
+        return CROSSOS_ERR_PARAM;
+    if (renderer->backend != CROSSOS_RENDER_BACKEND_SOFTWARE)
+        return CROSSOS_ERR_UNSUPPORT;
+    if (renderer->frame_open)
+        return CROSSOS_ERR_PARAM;
 
     crossos_result_t rc = crossos_surface_lock(renderer->surface, out_fb);
-    if (rc == CROSSOS_OK) renderer->frame_open = 1;
+    if (rc == CROSSOS_OK)
+        renderer->frame_open = 1;
     return rc;
 }
 
 crossos_result_t crossos_renderer_end_software_frame(crossos_renderer_t *renderer)
 {
-    if (!renderer) return CROSSOS_ERR_PARAM;
-    if (renderer->backend != CROSSOS_RENDER_BACKEND_SOFTWARE) return CROSSOS_ERR_UNSUPPORT;
-    if (!renderer->frame_open) return CROSSOS_ERR_PARAM;
+    if (!renderer)
+        return CROSSOS_ERR_PARAM;
+    if (renderer->backend != CROSSOS_RENDER_BACKEND_SOFTWARE)
+        return CROSSOS_ERR_UNSUPPORT;
+    if (!renderer->frame_open)
+        return CROSSOS_ERR_PARAM;
 
     crossos_surface_unlock(renderer->surface);
     renderer->frame_open = 0;

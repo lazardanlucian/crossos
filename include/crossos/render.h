@@ -15,40 +15,47 @@
 #include "display.h"
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
-typedef enum crossos_render_backend {
-    CROSSOS_RENDER_BACKEND_AUTO = 0,
-    CROSSOS_RENDER_BACKEND_SOFTWARE,
-    CROSSOS_RENDER_BACKEND_OPENGL,
-    CROSSOS_RENDER_BACKEND_VULKAN,
-} crossos_render_backend_t;
+    typedef enum crossos_render_backend
+    {
+        CROSSOS_RENDER_BACKEND_AUTO = 0,
+        CROSSOS_RENDER_BACKEND_SOFTWARE,
+        CROSSOS_RENDER_BACKEND_OPENGL,
+        CROSSOS_RENDER_BACKEND_VULKAN,
+    } crossos_render_backend_t;
 
-typedef struct crossos_renderer_caps {
-    int is_hardware_accelerated;
-    int supports_compute;
-    int supports_offscreen;
-    int max_texture_size;
-} crossos_renderer_caps_t;
+    typedef struct crossos_renderer_caps
+    {
+        int is_hardware_accelerated;
+        int supports_compute;
+        int supports_offscreen;
+        int max_texture_size;
+    } crossos_renderer_caps_t;
 
-typedef struct crossos_renderer crossos_renderer_t;
+    typedef struct crossos_renderer crossos_renderer_t;
 
-crossos_result_t crossos_renderer_create(crossos_window_t          *win,
-                                         crossos_render_backend_t   preferred,
-                                         crossos_renderer_t       **out_renderer);
+    int crossos_renderer_backend_is_available(crossos_render_backend_t backend);
 
-void crossos_renderer_destroy(crossos_renderer_t *renderer);
+    crossos_render_backend_t crossos_renderer_select_backend(crossos_render_backend_t preferred);
 
-crossos_render_backend_t crossos_renderer_backend(const crossos_renderer_t *renderer);
+    crossos_result_t crossos_renderer_create(crossos_window_t *win,
+                                             crossos_render_backend_t preferred,
+                                             crossos_renderer_t **out_renderer);
 
-crossos_result_t crossos_renderer_get_caps(const crossos_renderer_t *renderer,
-                                           crossos_renderer_caps_t   *out_caps);
+    void crossos_renderer_destroy(crossos_renderer_t *renderer);
 
-crossos_result_t crossos_renderer_begin_software_frame(crossos_renderer_t    *renderer,
-                                                       crossos_framebuffer_t *out_fb);
+    crossos_render_backend_t crossos_renderer_backend(const crossos_renderer_t *renderer);
 
-crossos_result_t crossos_renderer_end_software_frame(crossos_renderer_t *renderer);
+    crossos_result_t crossos_renderer_get_caps(const crossos_renderer_t *renderer,
+                                               crossos_renderer_caps_t *out_caps);
+
+    crossos_result_t crossos_renderer_begin_software_frame(crossos_renderer_t *renderer,
+                                                           crossos_framebuffer_t *out_fb);
+
+    crossos_result_t crossos_renderer_end_software_frame(crossos_renderer_t *renderer);
 
 #ifdef __cplusplus
 } /* extern "C" */

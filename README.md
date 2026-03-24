@@ -25,7 +25,7 @@ CrossOS now also includes utility modules for file I/O, HTTP API calls, basic au
 | Optical backend plug-in API | ✔ | ✔ | ✔ |
 | SDK drawing primitives | ✔ | ✔ | ✔ |
 | SDK UI widgets (label/button/list/progress/dropdown/tree header) | ✔ | ✔ | ✔ |
-| Native file picker API | ✔ | planned | planned |
+| Native file picker API | ✔ | ✔ (zenity/kdialog fallback) | planned |
 | UI layout helper (responsive column flow) | ✔ | ✔ | ✔ |
 
 ---

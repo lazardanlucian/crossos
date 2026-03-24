@@ -3,6 +3,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(__linux__) && !defined(__ANDROID__)
+#include <stdio.h>
+extern FILE *popen(const char *command, const char *type);
+extern int pclose(FILE *stream);
+#endif
+
 extern void crossos__set_error(const char *fmt, ...);
 
 #if defined(_WIN32)
@@ -126,6 +132,148 @@ crossos_result_t crossos_dialog_pick_files(const char *title,
 
 #else
 
+#if defined(__linux__) && !defined(__ANDROID__)
+
+static char *crossos__dup_trimmed_line(const char *line)
+{
+    if (!line) {
+        return NULL;
+    }
+
+    size_t len = strlen(line);
+    while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
+        len--;
+    }
+
+    char *out = (char *)malloc(len + 1);
+    if (!out) {
+        return NULL;
+    }
+    memcpy(out, line, len);
+    out[len] = '\0';
+    return out;
+}
+
+static int crossos__append_utf8_item(crossos_dialog_file_list_t *list, const char *text)
+{
+    char **new_items = (char **)realloc(list->items, (list->count + 1) * sizeof(char *));
+    if (!new_items) {
+        return 0;
+    }
+    list->items = new_items;
+    list->items[list->count] = crossos__dup_trimmed_line(text);
+    if (!list->items[list->count]) {
+        return 0;
+    }
+    list->count++;
+    return 1;
+}
+
+static int crossos__command_exists(const char *name)
+{
+    char cmd[128];
+    snprintf(cmd, sizeof(cmd), "command -v %s >/dev/null 2>&1", name);
+    int rc = system(cmd);
+    return rc == 0;
+}
+
+static crossos_result_t crossos__parse_pipe_output(char *line,
+                                                   crossos_dialog_file_list_t *out_files)
+{
+    if (!line || line[0] == '\0') {
+        return CROSSOS_OK;
+    }
+
+    char *cur = line;
+    while (cur && *cur) {
+        char *sep = strchr(cur, '|');
+        if (sep) {
+            *sep = '\0';
+        }
+
+        if (cur[0] != '\0') {
+            if (!crossos__append_utf8_item(out_files, cur)) {
+                return CROSSOS_ERR_OOM;
+            }
+        }
+
+        cur = sep ? (sep + 1) : NULL;
+    }
+
+    return CROSSOS_OK;
+}
+
+crossos_result_t crossos_dialog_pick_files(const char *title,
+                                           int allow_multiple,
+                                           crossos_dialog_file_list_t *out_files)
+{
+    if (!out_files) {
+        crossos__set_error("dialog_pick_files: invalid parameter");
+        return CROSSOS_ERR_PARAM;
+    }
+
+    memset(out_files, 0, sizeof(*out_files));
+
+    char cmd[2048];
+    int use_zenity = crossos__command_exists("zenity");
+    int use_kdialog = !use_zenity && crossos__command_exists("kdialog");
+
+    if (!use_zenity && !use_kdialog) {
+        crossos__set_error("dialog_pick_files: neither zenity nor kdialog is available");
+        return CROSSOS_ERR_UNSUPPORT;
+    }
+
+    if (use_zenity) {
+        snprintf(cmd, sizeof(cmd),
+                 "zenity --file-selection %s --separator='|' %s 2>/dev/null",
+                 allow_multiple ? "--multiple" : "",
+                 (title && title[0]) ? "--title=\"CrossOS File Picker\"" : "");
+    } else {
+        snprintf(cmd, sizeof(cmd),
+                 "kdialog --getopenfilename %s 2>/dev/null",
+                 allow_multiple ? "--multiple --separate-output" : "");
+    }
+
+    FILE *pipe = popen(cmd, "r");
+    if (!pipe) {
+        crossos__set_error("dialog_pick_files: failed to launch picker command");
+        return CROSSOS_ERR_WINDOW;
+    }
+
+    char line[4096];
+    if (!fgets(line, sizeof(line), pipe)) {
+        pclose(pipe);
+        return CROSSOS_OK;
+    }
+
+    crossos_result_t rc;
+    if (use_zenity) {
+        rc = crossos__parse_pipe_output(line, out_files);
+    } else {
+        rc = crossos__append_utf8_item(out_files, line) ? CROSSOS_OK : CROSSOS_ERR_OOM;
+        if (allow_multiple && rc == CROSSOS_OK) {
+            while (fgets(line, sizeof(line), pipe)) {
+                if (!crossos__append_utf8_item(out_files, line)) {
+                    rc = CROSSOS_ERR_OOM;
+                    break;
+                }
+            }
+        }
+    }
+
+    pclose(pipe);
+
+    if (rc != CROSSOS_OK) {
+        crossos_dialog_file_list_free(out_files);
+        crossos__set_error("dialog_pick_files: out of memory");
+        return rc;
+    }
+
+    return CROSSOS_OK;
+}
+
+#else
+
 crossos_result_t crossos_dialog_pick_files(const char *title,
                                            int allow_multiple,
                                            crossos_dialog_file_list_t *out_files)
@@ -140,6 +288,8 @@ crossos_result_t crossos_dialog_pick_files(const char *title,
     crossos__set_error("dialog_pick_files: not implemented on this platform yet");
     return CROSSOS_ERR_UNSUPPORT;
 }
+
+#endif
 
 #endif
 

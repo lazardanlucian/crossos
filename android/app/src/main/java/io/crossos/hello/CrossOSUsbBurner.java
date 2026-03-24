@@ -434,6 +434,20 @@ public final class CrossOSUsbBurner {
         }
 
         try {
+            MmcProbe mmc = probeMmcCapability(conn, in, out);
+            if (mmc.supported) {
+                boolean profileOptical = isOpticalProfile(mmc.currentProfile);
+                if (DEBUG) {
+                    Log.i(TAG, "looksLikeOptical: " + devId + " - MMC supported, profile=0x"
+                        + String.format("%04x", mmc.currentProfile)
+                        + " opticalProfile=" + profileOptical
+                        + " writable=" + mmc.writable);
+                }
+                if (profileOptical) {
+                    return true;
+                }
+            }
+
             byte[] inquiry = scsiInquiry(conn, in, out);
             if (inquiry == null || inquiry.length < 36) {
                 if (DEBUG) Log.w(TAG, "looksLikeOptical: " + devId + " - SCSI INQUIRY failed or too short (len=" + 
@@ -508,6 +522,11 @@ public final class CrossOSUsbBurner {
         }
 
         try {
+            MmcProbe mmc = probeMmcCapability(conn, in, out);
+            probe.mmcSupported = mmc.supported;
+            probe.mmcCurrentProfile = mmc.currentProfile;
+            probe.mmcWritable = mmc.writable;
+
             testUnitReady(conn, in, out);
             long[] cap = readCapacity(conn, in, out);
             long lastLba = cap[0];
@@ -516,6 +535,10 @@ public final class CrossOSUsbBurner {
                 probe.hasMedia = true;
                 probe.capacityBytes = (lastLba + 1L) * blockSize;
                 probe.freeBytes = probe.capacityBytes;
+            }
+
+            if (!probe.hasMedia && mmc.supported && isOpticalProfile(mmc.currentProfile)) {
+                probe.hasMedia = true;
             }
         } catch (Exception ignored) {
         } finally {
@@ -732,6 +755,68 @@ public final class CrossOSUsbBurner {
         return scsiTransfer(conn, in, out, cdb, null, 36, SCSI_DIR_IN);
     }
 
+    private static byte[] scsiRequestSense(UsbDeviceConnection conn,
+                                           UsbEndpoint in,
+                                           UsbEndpoint out) {
+        byte[] cdb = new byte[6];
+        cdb[0] = 0x03;
+        cdb[4] = 18;
+
+        ScsiResult result = scsiTransferRaw(conn, in, out, cdb, null, 18, SCSI_DIR_IN);
+        if (result == null || result.status != 0 || result.data == null || result.data.length == 0) {
+            return null;
+        }
+        return result.data;
+    }
+
+    private static MmcProbe probeMmcCapability(UsbDeviceConnection conn,
+                                               UsbEndpoint in,
+                                               UsbEndpoint out) {
+        MmcProbe probe = new MmcProbe();
+
+        byte[] cdb = new byte[10];
+        cdb[0] = 0x46; // GET CONFIGURATION
+        cdb[1] = 0x00; // RT=0: current values
+        cdb[2] = 0x00;
+        cdb[3] = 0x00;
+        cdb[7] = 0x00;
+        cdb[8] = 0x20; // initial read
+
+        byte[] data = scsiTransfer(conn, in, out, cdb, null, 0x20, SCSI_DIR_IN);
+        if (data == null || data.length < 8) {
+            return probe;
+        }
+
+        probe.supported = true;
+        ByteBuffer bb = ByteBuffer.wrap(data).order(ByteOrder.BIG_ENDIAN);
+        int dataLength = bb.getInt();
+        int currentProfile = Short.toUnsignedInt(bb.getShort());
+        probe.currentProfile = currentProfile;
+
+        int totalLen = Math.min(data.length, dataLength + 4);
+        int offset = 8;
+        while (offset + 4 <= totalLen) {
+            int featureCode = Short.toUnsignedInt(bb.getShort(offset));
+            int flags = bb.get(offset + 2) & 0xFF;
+            int additionalLen = bb.get(offset + 3) & 0xFF;
+            boolean current = (flags & 0x01) != 0;
+
+            if (featureCode == 0x0021 && current) { // Random Writable
+                probe.writable = true;
+            }
+            if (featureCode == 0x002F && current) { // DVD-R/RW Write
+                probe.writable = true;
+            }
+            if (featureCode == 0x0040 && current) { // BD Write
+                probe.writable = true;
+            }
+
+            offset += 4 + additionalLen;
+        }
+
+        return probe;
+    }
+
     private static void testUnitReady(UsbDeviceConnection conn,
                                       UsbEndpoint in,
                                       UsbEndpoint out) {
@@ -804,6 +889,52 @@ public final class CrossOSUsbBurner {
                                        byte[] dataOut,
                                        int dataInLen,
                                        int direction) {
+        ScsiResult result = scsiTransferRaw(conn, in, out, cdb, dataOut, dataInLen, direction);
+        if (result == null) {
+            return null;
+        }
+
+        if (result.status == 0) {
+            return result.data;
+        }
+
+        if ((cdb[0] & 0xFF) != 0x03) {
+            byte[] sense = scsiRequestSense(conn, in, out);
+            SenseInfo info = parseSense(sense);
+            if (DEBUG) {
+                if (info.valid) {
+                    Log.w(TAG, "scsiTransfer: command 0x" + String.format("%02x", cdb[0] & 0xFF)
+                        + " failed status=" + result.status
+                        + " sense=" + info.toShortString());
+                } else {
+                    Log.w(TAG, "scsiTransfer: command 0x" + String.format("%02x", cdb[0] & 0xFF)
+                        + " failed status=" + result.status + " without valid sense");
+                }
+            }
+
+            if (shouldRetryFromSense(info)) {
+                if (DEBUG) {
+                    Log.i(TAG, "scsiTransfer: retrying command 0x"
+                        + String.format("%02x", cdb[0] & 0xFF)
+                        + " after recoverable sense");
+                }
+                ScsiResult retry = scsiTransferRaw(conn, in, out, cdb, dataOut, dataInLen, direction);
+                if (retry != null && retry.status == 0) {
+                    return retry.data;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static ScsiResult scsiTransferRaw(UsbDeviceConnection conn,
+                                              UsbEndpoint in,
+                                              UsbEndpoint out,
+                                              byte[] cdb,
+                                              byte[] dataOut,
+                                              int dataInLen,
+                                              int direction) {
         int transferLen = dataOut != null ? dataOut.length : dataInLen;
 
         byte[] cbw = buildCbw(nextTag(), transferLen, direction == SCSI_DIR_IN, cdb);
@@ -844,11 +975,69 @@ public final class CrossOSUsbBurner {
         cswBuf.getInt(); // tag
         cswBuf.getInt(); // data residue
         int status = cswBuf.get() & 0xFF;
-        if (status != 0) {
-            return null;
+        ScsiResult result = new ScsiResult();
+        result.data = dataIn;
+        result.status = status;
+        return result;
+    }
+
+    private static SenseInfo parseSense(byte[] sense) {
+        SenseInfo info = new SenseInfo();
+        if (sense == null || sense.length < 14) {
+            return info;
         }
 
-        return dataIn;
+        int responseCode = sense[0] & 0x7F;
+        if (responseCode != 0x70 && responseCode != 0x71) {
+            return info;
+        }
+
+        info.valid = true;
+        info.senseKey = sense[2] & 0x0F;
+        info.asc = sense[12] & 0xFF;
+        info.ascq = sense[13] & 0xFF;
+        return info;
+    }
+
+    private static boolean shouldRetryFromSense(SenseInfo info) {
+        if (!info.valid) {
+            return false;
+        }
+
+        // UNIT ATTENTION (e.g. media changed/reset) – one retry often succeeds.
+        if (info.senseKey == 0x06) {
+            return true;
+        }
+
+        // NOT READY with "becoming ready" style conditions.
+        return info.senseKey == 0x02 && info.asc == 0x04
+            && (info.ascq == 0x01 || info.ascq == 0x02 || info.ascq == 0x07);
+    }
+
+    private static boolean isOpticalProfile(int profile) {
+        switch (profile) {
+            case 0x0008: // CD-ROM
+            case 0x0009: // CD-R
+            case 0x000A: // CD-RW
+            case 0x0010: // DVD-ROM
+            case 0x0011: // DVD-R Sequential
+            case 0x0012: // DVD-RAM
+            case 0x0013: // DVD-RW Restricted Overwrite
+            case 0x0014: // DVD-RW Sequential
+            case 0x0015: // DVD-R DL Sequential
+            case 0x0016: // DVD-R DL Layer Jump
+            case 0x001A: // DVD+RW
+            case 0x001B: // DVD+R
+            case 0x002A: // DVD+RW DL
+            case 0x002B: // DVD+R DL
+            case 0x0040: // BD-ROM
+            case 0x0041: // BD-R SRM
+            case 0x0042: // BD-R RRM
+            case 0x0043: // BD-RE
+                return true;
+            default:
+                return false;
+        }
     }
 
     private static final AtomicLong nextTag = new AtomicLong(1);
@@ -937,5 +1126,32 @@ public final class CrossOSUsbBurner {
         boolean hasMedia;
         long capacityBytes;
         long freeBytes;
+        boolean mmcSupported;
+        int mmcCurrentProfile;
+        boolean mmcWritable;
+    }
+
+    private static final class MmcProbe {
+        boolean supported;
+        int currentProfile;
+        boolean writable;
+    }
+
+    private static final class ScsiResult {
+        byte[] data;
+        int status;
+    }
+
+    private static final class SenseInfo {
+        boolean valid;
+        int senseKey;
+        int asc;
+        int ascq;
+
+        String toShortString() {
+            return "KEY=0x" + String.format("%02x", senseKey)
+                + " ASC=0x" + String.format("%02x", asc)
+                + " ASCQ=0x" + String.format("%02x", ascq);
+        }
     }
 }

@@ -47,12 +47,14 @@
 #include "websocket.h"
 #include "msgqueue.h"
 #include "render.h"
+#include "scanner.h"
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
-/* ── SDK version ──────────────────────────────────────────────────────── */
+    /* ── SDK version ──────────────────────────────────────────────────────── */
 
 #define CROSSOS_VERSION_MAJOR 0
 #define CROSSOS_VERSION_MINOR 5
@@ -60,52 +62,52 @@ extern "C" {
 
 #define CROSSOS_VERSION_STRING "0.5.0"
 
-/* ── SDK lifecycle ────────────────────────────────────────────────────── */
+    /* ── SDK lifecycle ────────────────────────────────────────────────────── */
 
-/**
- * Initialise the CrossOS SDK.
- *
- * Must be called once before any other CrossOS function.  On Android this
- * is called automatically from the JNI bridge; applications should still
- * call it to be portable.
- *
- * @return CROSSOS_OK on success, or a negative error code.
- */
-crossos_result_t crossos_init(void);
+    /**
+     * Initialise the CrossOS SDK.
+     *
+     * Must be called once before any other CrossOS function.  On Android this
+     * is called automatically from the JNI bridge; applications should still
+     * call it to be portable.
+     *
+     * @return CROSSOS_OK on success, or a negative error code.
+     */
+    crossos_result_t crossos_init(void);
 
-/**
- * Signal the event loop to terminate on next iteration.
- *
- * Safe to call from any thread, including an event callback.
- * After calling this function, crossos_run_loop() will return on its next
- * pass, and crossos_poll_event() / crossos_wait_event() will return 0.
- */
-void crossos_quit(void);
+    /**
+     * Signal the event loop to terminate on next iteration.
+     *
+     * Safe to call from any thread, including an event callback.
+     * After calling this function, crossos_run_loop() will return on its next
+     * pass, and crossos_poll_event() / crossos_wait_event() will return 0.
+     */
+    void crossos_quit(void);
 
-/**
- * Shut down the CrossOS SDK and release all platform resources.
- *
- * Call this after the event loop has returned and all windows have been
- * destroyed.  After this point no other CrossOS function may be called
- * until crossos_init() is invoked again.
- */
-void crossos_shutdown(void);
+    /**
+     * Shut down the CrossOS SDK and release all platform resources.
+     *
+     * Call this after the event loop has returned and all windows have been
+     * destroyed.  After this point no other CrossOS function may be called
+     * until crossos_init() is invoked again.
+     */
+    void crossos_shutdown(void);
 
-/* ── Diagnostics ──────────────────────────────────────────────────────── */
+    /* ── Diagnostics ──────────────────────────────────────────────────────── */
 
-/**
- * Returns a human-readable string describing the last error that occurred
- * on the calling thread, or an empty string if no error is recorded.
- *
- * The pointer is valid until the next CrossOS call on this thread.
- */
-const char *crossos_get_error(void);
+    /**
+     * Returns a human-readable string describing the last error that occurred
+     * on the calling thread, or an empty string if no error is recorded.
+     *
+     * The pointer is valid until the next CrossOS call on this thread.
+     */
+    const char *crossos_get_error(void);
 
-/**
- * Returns the name of the platform the SDK was compiled for.
- * One of: "windows", "linux", "android".
- */
-const char *crossos_platform_name(void);
+    /**
+     * Returns the name of the platform the SDK was compiled for.
+     * One of: "windows", "linux", "android".
+     */
+    const char *crossos_platform_name(void);
 
 #ifdef __cplusplus
 } /* extern "C" */

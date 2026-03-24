@@ -33,6 +33,7 @@ set(CROSSOS_SOURCES
     src/core/websocket.c
     src/core/msgqueue.c
     src/core/web_backend_fallback.c
+    src/core/scanner.c
 )
 
 if(WIN32)
@@ -150,6 +151,25 @@ elseif(UNIX)
     endif()
 endif()
 
+# ── Scanner platform backends & SANE link ─────────────────────────────────
+if(WIN32)
+    target_sources(crossos PRIVATE src/platform/windows/scanner_twain.c)
+elseif(ANDROID)
+    target_sources(crossos PRIVATE src/platform/android/scanner_android.c)
+elseif(UNIX)
+    target_sources(crossos PRIVATE src/platform/linux/scanner_sane.c)
+    # SANE (Scanner Access Now Easy) – required for Linux scanner support
+    find_library(SANE_LIB sane)
+    if(SANE_LIB)
+        target_link_libraries(crossos PUBLIC ${SANE_LIB})
+        target_compile_definitions(crossos PRIVATE CROSSOS_HAS_SANE=1)
+    else()
+        message(WARNING
+            "libsane not found. Scanner support disabled on Linux. "
+            "Install libsane-dev to enable it.")
+    endif()
+endif()
+
 # Optional HTTP backend
 find_package(CURL QUIET)
 if(CURL_FOUND)
@@ -174,6 +194,7 @@ endif()
 if(CROSSOS_BUILD_EXAMPLES)
     add_subdirectory(examples/hello_world)
     add_subdirectory(examples/disc_burner)
+    add_subdirectory(examples/film_scanner)
 endif()
 
 if(CROSSOS_BUILD_TESTS AND NOT ANDROID)

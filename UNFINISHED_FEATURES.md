@@ -12,6 +12,11 @@ This file tracks APIs that are still partially implemented or stubbed.
 	- backend implementation/availability checks are now explicit.
 - Core camera API now includes a functional virtual-camera fallback in `src/core/camera.c`
 	when platform camera backends return unsupported.
+- Scanner subsystem bootstrap added:
+	- new public API in `include/crossos/scanner.h` (device enumeration, scan, film curves).
+	- Linux SANE backend in `src/platform/linux/scanner_sane.c`.
+	- Windows (`scanner_twain.c`) and Android (`scanner_android.c`) stubs with documented implementation path.
+	- new `examples/film_scanner` demo app for preview + scan + curve/exposure UI.
 
 ## Remaining high-priority stubs
 
@@ -39,6 +44,16 @@ This file tracks APIs that are still partially implemented or stubbed.
 ### Dialogs
 
 - Android native picker implementation for `crossos_dialog_pick_files(...)`.
+
+### Scanner
+
+- Windows WIA/TWAIN backend implementation in `src/platform/windows/scanner_twain.c`.
+- Android USB backend implementation in `src/platform/android/scanner_android.c`.
+- Linux SANE backend improvements:
+	- asynchronous scan progress callback.
+	- exact 16-bit pipeline validation per backend frame format.
+	- model-specific defaults for Plustek OpticFilm variants.
+
 
 ## Suggested execution order
 

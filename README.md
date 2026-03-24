@@ -29,6 +29,7 @@ CrossOS now also includes utility modules for file I/O, HTTP API calls, basic au
 | Native file picker API | ✔ | ✔ (zenity/kdialog fallback) | planned |
 | UI layout helper (responsive column flow) | ✔ | ✔ | ✔ |
 | Camera API fallback on unsupported backend | virtual | virtual | virtual |
+| Scanner API (enumeration + scan + film-curve presets) | planned (TWAIN/WIA stub) | SANE backend | planned (USB backend stub) |
 
 ---
 
@@ -48,7 +49,8 @@ crossos/
 │   ├── file.h              File I/O helpers
 │   ├── web.h               HTTP request helpers
 │   ├── audio.h             Basic audio playback
-│   └── optical.h           Optical-drive and burn-progress helpers
+│   ├── optical.h           Optical-drive and burn-progress helpers
+│   └── scanner.h           Scanner + film-processing APIs
 │
 ├── src/
 │   ├── core/init.c         Platform-agnostic lifecycle
@@ -67,6 +69,7 @@ crossos/
 │
 ├── examples/hello_world/   Minimal gradient + event-logger app
 ├── examples/disc_burner/   File browser + burn queue + progress UI demo
+├── examples/film_scanner/  Scanner UI demo (preview/scan + film curves)
 ├── tests/                  Headless unit tests (no display needed)
 ├── cmake/                  CMake toolchain files
 ├── .devcontainer/          Dev-container for GitHub Codespaces / VS Code

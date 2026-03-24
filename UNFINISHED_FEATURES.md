@@ -6,12 +6,18 @@ This file tracks APIs that are still partially implemented or stubbed.
 
 - Linux file picker fallback implemented in `src/core/dialog.c` using `zenity` or `kdialog`.
 - Renderer abstraction now supports backend availability probing and auto/software fallback behavior in `src/core/render.c`.
+- Renderer OpenGL bootstrap implemented in `src/core/render.c`:
+	- `crossos_renderer_create(..., CROSSOS_RENDER_BACKEND_OPENGL, ...)` now succeeds.
+	- renderer exposes native render target via `crossos_renderer_get_native_target(...)`.
+	- backend implementation/availability checks are now explicit.
+- Core camera API now includes a functional virtual-camera fallback in `src/core/camera.c`
+	when platform camera backends return unsupported.
 
 ## Remaining high-priority stubs
 
 ### Rendering
 
-- OpenGL backend implementation behind `CROSSOS_RENDER_BACKEND_OPENGL`.
+- OpenGL backend full implementation behind `CROSSOS_RENDER_BACKEND_OPENGL` (context creation, swap, resources).
 - Vulkan backend implementation behind `CROSSOS_RENDER_BACKEND_VULKAN`.
 - Backend-specific present/swap and resource APIs (textures, pipelines, command buffers).
 
@@ -19,6 +25,7 @@ This file tracks APIs that are still partially implemented or stubbed.
 
 - Windows Media Foundation capture path in `src/platform/windows/camera_win32.c`.
 - Android Camera2 capture path in `src/platform/android/camera_android.c`.
+- Virtual fallback exists for unsupported platforms; remaining work is native hardware capture parity.
 
 ### Bluetooth
 

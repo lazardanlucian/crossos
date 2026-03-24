@@ -9,6 +9,7 @@ struct crossos_renderer
 {
     crossos_window_t *win;
     crossos_surface_t *surface;
+    void *native_target;
     crossos_render_backend_t backend;
     crossos_renderer_caps_t caps;
     int frame_open;
@@ -46,11 +47,26 @@ int crossos_renderer_backend_is_available(crossos_render_backend_t backend)
     case CROSSOS_RENDER_BACKEND_SOFTWARE:
         return 1;
     case CROSSOS_RENDER_BACKEND_OPENGL:
+        return 1;
     case CROSSOS_RENDER_BACKEND_VULKAN:
         return 0;
     case CROSSOS_RENDER_BACKEND_AUTO:
     default:
         return 1;
+    }
+}
+
+int crossos_renderer_backend_is_implemented(crossos_render_backend_t backend)
+{
+    switch (backend)
+    {
+    case CROSSOS_RENDER_BACKEND_SOFTWARE:
+    case CROSSOS_RENDER_BACKEND_OPENGL:
+        return 1;
+    case CROSSOS_RENDER_BACKEND_VULKAN:
+    case CROSSOS_RENDER_BACKEND_AUTO:
+    default:
+        return 0;
     }
 }
 
@@ -87,15 +103,19 @@ crossos_result_t crossos_renderer_create(crossos_window_t *win,
         crossos__set_error("renderer backend unavailable; fell back to software");
     }
 
-    if (selected != CROSSOS_RENDER_BACKEND_SOFTWARE)
+    if (!crossos_renderer_backend_is_implemented(selected))
     {
         crossos__set_error("selected renderer backend not implemented yet");
         return CROSSOS_ERR_UNSUPPORT;
     }
 
-    crossos_surface_t *surface = crossos_surface_get(win);
-    if (!surface)
-        return CROSSOS_ERR_DISPLAY;
+    crossos_surface_t *surface = NULL;
+    if (selected == CROSSOS_RENDER_BACKEND_SOFTWARE)
+    {
+        surface = crossos_surface_get(win);
+        if (!surface)
+            return CROSSOS_ERR_DISPLAY;
+    }
 
     crossos_renderer_t *renderer = (crossos_renderer_t *)malloc(sizeof(*renderer));
     if (!renderer)
@@ -103,6 +123,7 @@ crossos_result_t crossos_renderer_create(crossos_window_t *win,
 
     renderer->win = win;
     renderer->surface = surface;
+    renderer->native_target = crossos_window_get_native_handle(win);
     renderer->backend = selected;
     renderer->frame_open = 0;
     set_caps_for_backend(selected, &renderer->caps);
@@ -139,6 +160,13 @@ crossos_result_t crossos_renderer_get_caps(const crossos_renderer_t *renderer,
         return CROSSOS_ERR_PARAM;
     *out_caps = renderer->caps;
     return CROSSOS_OK;
+}
+
+void *crossos_renderer_get_native_target(const crossos_renderer_t *renderer)
+{
+    if (!renderer)
+        return NULL;
+    return renderer->native_target;
 }
 
 crossos_result_t crossos_renderer_begin_software_frame(crossos_renderer_t *renderer,

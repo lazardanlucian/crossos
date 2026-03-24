@@ -39,6 +39,8 @@ extern "C"
 
     int crossos_renderer_backend_is_available(crossos_render_backend_t backend);
 
+    int crossos_renderer_backend_is_implemented(crossos_render_backend_t backend);
+
     crossos_render_backend_t crossos_renderer_select_backend(crossos_render_backend_t preferred);
 
     crossos_result_t crossos_renderer_create(crossos_window_t *win,
@@ -51,6 +53,8 @@ extern "C"
 
     crossos_result_t crossos_renderer_get_caps(const crossos_renderer_t *renderer,
                                                crossos_renderer_caps_t *out_caps);
+
+    void *crossos_renderer_get_native_target(const crossos_renderer_t *renderer);
 
     crossos_result_t crossos_renderer_begin_software_frame(crossos_renderer_t *renderer,
                                                            crossos_framebuffer_t *out_fb);

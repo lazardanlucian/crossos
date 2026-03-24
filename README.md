@@ -24,9 +24,11 @@ CrossOS now also includes utility modules for file I/O, HTTP API calls, basic au
 | Optical burn progress API | simulated | simulated | real USB backend + simulated fallback |
 | Optical backend plug-in API | ✔ | ✔ | ✔ |
 | SDK drawing primitives | ✔ | ✔ | ✔ |
+| CrossOS renderer abstraction (AUTO/software/OpenGL bootstrap) | ✔ | ✔ | ✔ |
 | SDK UI widgets (label/button/list/progress/dropdown/tree header) | ✔ | ✔ | ✔ |
 | Native file picker API | ✔ | ✔ (zenity/kdialog fallback) | planned |
 | UI layout helper (responsive column flow) | ✔ | ✔ | ✔ |
+| Camera API fallback on unsupported backend | virtual | virtual | virtual |
 
 ---
 

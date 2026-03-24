@@ -29,6 +29,7 @@ set(CROSSOS_SOURCES
     src/core/image.c
     src/core/camera.c
     src/core/font.c
+    src/core/render.c
     src/core/websocket.c
     src/core/msgqueue.c
     src/core/web_backend_fallback.c

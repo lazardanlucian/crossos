@@ -46,6 +46,7 @@
 #include "font.h"
 #include "websocket.h"
 #include "msgqueue.h"
+#include "render.h"
 
 #ifdef __cplusplus
 extern "C" {

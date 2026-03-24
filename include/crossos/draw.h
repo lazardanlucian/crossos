@@ -86,6 +86,11 @@ void crossos_draw_line(const crossos_framebuffer_t *fb,
  * Draw `text` at (x, y) using the built-in 5×7 pixel glyph font.
  * `scale` multiplies every pixel; 1 = native, 2 = double-size.
  * Supports printable ASCII (both cases).
+ *
+ * Note: only printable ASCII (0x20–0x7E) is rendered; non-ASCII bytes are
+ * shown as '?'.  For UTF-8 strings with multi-byte sequences use
+ * crossos_draw_text_ex() with CROSSOS_FONT_GLYPH_LARGE or
+ * CROSSOS_FONT_SMOOTH.
  */
 void crossos_draw_text(const crossos_framebuffer_t *fb,
                        int x, int y,
@@ -129,7 +134,13 @@ typedef enum crossos_font {
  *
  * @param fb    Target framebuffer.
  * @param x,y   Top-left origin in pixels.
- * @param text  NUL-terminated UTF-8 string (printable ASCII only).
+ * @param text  NUL-terminated UTF-8 string.  Printable ASCII (0x20–0x7E)
+ *              is always rendered.  With CROSSOS_FONT_GLYPH_LARGE and
+ *              CROSSOS_FONT_SMOOTH, a selection of Unicode codepoints is
+ *              also supported: box-drawing (U+2500–U+253C, U+2550–U+255D),
+ *              block elements (U+2580–U+2593), arrows (U+2190–U+2193), and
+ *              common symbols (°±×÷•✓✗©®™).  Unknown codepoints render as
+ *              '?'.
  * @param color Foreground colour.
  * @param font  Font face to use.
  * @param scale Pixel-doubling factor (1 = native, 2 = double size, …).
@@ -141,11 +152,34 @@ void crossos_draw_text_ex(const crossos_framebuffer_t *fb,
                           crossos_font_t font,
                           int scale);
 
-/** Width in pixels of `text` rendered with the given font and scale. */
+/** Width in pixels of `text` rendered with the given font and scale.
+ *  UTF-8 multi-byte sequences are counted as a single character width. */
 int crossos_draw_text_width_ex(const char *text, crossos_font_t font, int scale);
 
 /** Height in pixels of one rendered line for the given font and scale. */
 int crossos_draw_text_height_ex(crossos_font_t font, int scale);
+
+/**
+ * Draw a single Unicode codepoint at (x, y) using the specified font.
+ *
+ * Equivalent to rendering a one-codepoint UTF-8 string with
+ * crossos_draw_text_ex(), but accepts a raw Unicode codepoint directly.
+ * Useful for drawing individual glyphs such as box-drawing characters or
+ * emoji-style symbols without constructing a UTF-8 string.
+ *
+ * @param fb        Target framebuffer.
+ * @param x,y       Top-left origin in pixels.
+ * @param codepoint Unicode codepoint (e.g. 0x2502 for '│').
+ * @param color     Foreground colour.
+ * @param font      Font face; CROSSOS_FONT_GLYPH is ASCII-only.
+ * @param scale     Pixel-doubling factor (1 = native size).
+ */
+void crossos_draw_glyph(const crossos_framebuffer_t *fb,
+                        int x, int y,
+                        unsigned int codepoint,
+                        crossos_color_t color,
+                        crossos_font_t font,
+                        int scale);
 
 #ifdef __cplusplus
 } /* extern "C" */

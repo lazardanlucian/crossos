@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(crossos
-    VERSION   0.2.0
+    VERSION   0.5.0
     LANGUAGES C
     DESCRIPTION "Cross-platform display driver / input SDK"
 )
@@ -27,6 +27,10 @@ set(CROSSOS_SOURCES
     src/core/optical.c
     src/core/bluetooth.c
     src/core/image.c
+    src/core/camera.c
+    src/core/font.c
+    src/core/websocket.c
+    src/core/msgqueue.c
     src/core/web_backend_fallback.c
 )
 
@@ -35,6 +39,8 @@ if(WIN32)
         src/platform/windows/window_win32.c
         src/platform/windows/input_win32.c
         src/platform/windows/bluetooth_win32.c
+        src/platform/windows/camera_win32.c
+        src/platform/windows/font_win32.c
     )
 elseif(ANDROID)
     list(APPEND CROSSOS_SOURCES
@@ -42,12 +48,16 @@ elseif(ANDROID)
         src/platform/android/input_android.c
         src/platform/android/optical_android.c
         src/platform/android/bluetooth_android.c
+        src/platform/android/camera_android.c
+        src/platform/android/font_android.c
     )
 elseif(UNIX)
     list(APPEND CROSSOS_SOURCES
         src/platform/linux/window_x11.c
         src/platform/linux/input_x11.c
         src/platform/linux/bluetooth_linux.c
+        src/platform/linux/camera_linux.c
+        src/platform/linux/font_linux.c
     )
 endif()
 
@@ -58,6 +68,8 @@ target_include_directories(crossos
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/thirdparty
 )
 
 # ── Platform-specific dependencies ───────────────────────────────────────
@@ -78,6 +90,10 @@ elseif(ANDROID)
     else()
         target_link_libraries(crossos PUBLIC ${ANDROID_LIB} ${LOG_LIB})
     endif()
+
+    # pthreads – msgqueue and websocket background threads
+    find_package(Threads REQUIRED)
+    target_link_libraries(crossos PUBLIC Threads::Threads)
 
 elseif(UNIX)
     find_package(X11 REQUIRED)
@@ -117,6 +133,9 @@ elseif(UNIX)
     # pthreads (used by ALSA streaming thread)
     find_package(Threads REQUIRED)
     target_link_libraries(crossos PUBLIC Threads::Threads)
+
+    # libm – required by font.c (roundf, ceilf via stb_truetype)
+    target_link_libraries(crossos PUBLIC m)
 
     # BlueZ Bluetooth (optional – scan/connect through kernel HCI sockets)
     find_library(BLUETOOTH_LIB bluetooth)

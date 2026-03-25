@@ -4,15 +4,22 @@ A cross-platform **display driver / input SDK** written in C that lets you write
 
 CrossOS now also includes utility modules for file I/O, HTTP API calls, basic audio playback, optical-disc helpers, and a lightweight software UI toolkit.
 
+On Linux, CrossOS now auto-selects a runtime backend:
+
+- X11 when `DISPLAY` is available
+- terminal rendering when running inside an interactive TTY
+
+That fallback stays transparent to application code: the same window, surface, input, and renderer APIs continue to work.
+
 ## Features
 
 | Feature | Windows | Linux | Android |
 |---|---|---|---|
-| Native window creation | Win32 | X11 | ANativeWindow |
-| Software framebuffer | GDI DIBSection | XPutImage | ANativeWindow_lock |
+| Native window creation | Win32 | X11 / terminal fallback | ANativeWindow |
+| Software framebuffer | GDI DIBSection | XPutImage / ANSI terminal renderer | ANativeWindow_lock |
 | Touch input (multi-touch) | WM_TOUCH / WM_POINTER | XInput2 | AInputEvent |
-| Keyboard events | WM_KEYDOWN/UP | XKeyPress/Release | N/A (on-screen KB) |
-| Mouse / pointer events | WM_LBUTTON, WM_MOUSEMOVE | ButtonPress/Release, MotionNotify | AMotionEvent |
+| Keyboard events | WM_KEYDOWN/UP | XKeyPress/Release / terminal raw input | N/A (on-screen KB) |
+| Mouse / pointer events | WM_LBUTTON, WM_MOUSEMOVE | ButtonPress/Release, MotionNotify / terminal mouse reporting | AMotionEvent |
 | Scroll events | WM_MOUSEWHEEL | ButtonPress (Button4/5) | Swipe gestures |
 | Full-screen mode | ✔ | ✔ (_NET_WM_STATE) | always full-screen |
 | Multi-monitor query | ✔ (SM_CMONITORS) | ✔ (ScreenCount) | N/A |
@@ -99,12 +106,33 @@ The Android app in this repository now registers a USB-host backend at startup.
 
 ```bash
 # Prerequisites (Ubuntu/Debian):
-# sudo apt-get install -y cmake build-essential libx11-dev libxext-dev libxi-dev libxrandr-dev libxinerama-dev libxcursor-dev
+# sudo apt-get install -y cmake build-essential
+# Optional for the X11 backend:
+# sudo apt-get install -y libx11-dev libxext-dev libxi-dev libxrandr-dev libxinerama-dev libxcursor-dev
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 cmake --build .
 ./hello_world
 ```
+
+Linux backend selection:
+
+- Default: `X11` when `DISPLAY` is set, otherwise terminal mode on a TTY
+- Force terminal mode: `CROSSOS_LINUX_BACKEND=terminal ./hello_world`
+- Force X11: `CROSSOS_LINUX_BACKEND=x11 ./hello_world`
+
+**Terminal Mode (Character-based UI rendering):**
+
+The terminal backend converts the pixel-based framebuffer into a character grid using Unicode block elements (█) and colors via ANSI truecolor escape sequences. This allows any CrossOS application to run in the terminal without modification:
+
+- Window resolution is scaled down to character cells (typically 8-16 pixels per character)
+- Each character cell gets the average color of its pixel region via box-filter sampling
+- Supports keyboard input (raw terminal mode, arrow keys, function keys)
+- Supports mouse reporting (SGR protocol if terminal supports it)
+- Detects window resize events via SIGWINCH
+- Works in both graphical terminal emulators and headless SSH sessions
+
+The existing `crossos_draw_*` API works transparently: apps draw pixels normally, and the terminal backend samples the framebuffer into character cells during present.
 
 ### Windows (cross-compile from Linux)
 

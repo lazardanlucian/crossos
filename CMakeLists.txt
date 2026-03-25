@@ -55,6 +55,8 @@ elseif(ANDROID)
     )
 elseif(UNIX)
     list(APPEND CROSSOS_SOURCES
+        src/platform/linux/linux_dispatch.c
+        src/platform/linux/terminal_ui_backend.c
         src/platform/linux/window_x11.c
         src/platform/linux/input_x11.c
         src/platform/linux/bluetooth_linux.c
@@ -98,29 +100,34 @@ elseif(ANDROID)
     target_link_libraries(crossos PUBLIC Threads::Threads)
 
 elseif(UNIX)
-    find_package(X11 REQUIRED)
+    find_package(X11 QUIET)
 
-    if(NOT X11_FOUND)
-        message(FATAL_ERROR
-            "X11 not found. Install libx11-dev and libxi-dev, then retry.")
-    endif()
+    if(X11_FOUND)
+        target_include_directories(crossos PRIVATE ${X11_INCLUDE_DIR})
+        target_link_libraries(crossos PUBLIC ${X11_LIBRARIES})
+        target_compile_definitions(crossos PRIVATE CROSSOS_HAS_X11_BACKEND=1)
 
-    target_include_directories(crossos PRIVATE ${X11_INCLUDE_DIR})
-    target_link_libraries(crossos PUBLIC ${X11_LIBRARIES})
+        # XInput2 (multi-touch)
+        if(X11_Xi_FOUND)
+            target_include_directories(crossos PRIVATE ${X11_Xi_INCLUDE_PATH})
+            target_link_libraries(crossos PUBLIC ${X11_Xi_LIB})
+            target_compile_definitions(crossos PRIVATE HAVE_XINPUT2=1)
+        else()
+            message(WARNING
+                "XInput2 not found (libxi-dev). Touch support will be limited.")
+        endif()
 
-    # XInput2 (multi-touch)
-    if(X11_Xi_FOUND)
-        target_include_directories(crossos PRIVATE ${X11_Xi_INCLUDE_PATH})
-        target_link_libraries(crossos PUBLIC ${X11_Xi_LIB})
-        target_compile_definitions(crossos PRIVATE HAVE_XINPUT2=1)
+        # Xrandr (multi-monitor)
+        if(X11_Xrandr_FOUND)
+            target_link_libraries(crossos PUBLIC ${X11_Xrandr_LIB})
+        endif()
     else()
+        list(REMOVE_ITEM CROSSOS_SOURCES
+            src/platform/linux/window_x11.c
+            src/platform/linux/input_x11.c)
+        set_property(TARGET crossos PROPERTY SOURCES "${CROSSOS_SOURCES}")
         message(WARNING
-            "XInput2 not found (libxi-dev). Touch support will be limited.")
-    endif()
-
-    # Xrandr (multi-monitor)
-    if(X11_Xrandr_FOUND)
-        target_link_libraries(crossos PUBLIC ${X11_Xrandr_LIB})
+            "X11 not found. Linux builds will use the terminal backend only.")
     endif()
 
     # ALSA PCM streaming

@@ -48,6 +48,7 @@
 #include "msgqueue.h"
 #include "render.h"
 #include "scanner.h"
+#include "telemetry.h"
 
 #ifdef __cplusplus
 extern "C"

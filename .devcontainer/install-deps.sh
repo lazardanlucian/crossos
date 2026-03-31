@@ -40,6 +40,9 @@ apt-get install -y --no-install-recommends \
     libxinerama-dev \
     libxcursor-dev \
     \
+    `# OpenGL / GLX development libraries (render_glx.c)` \
+    libgl-dev \
+    \
     `# Windows cross-compile toolchain` \
     mingw-w64 \
     \

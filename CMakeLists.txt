@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(crossos
-    VERSION   0.5.0
+    VERSION   0.6.0
     LANGUAGES C
     DESCRIPTION "Cross-platform display driver / input SDK"
 )
@@ -43,6 +43,7 @@ if(WIN32)
         src/platform/windows/bluetooth_win32.c
         src/platform/windows/camera_win32.c
         src/platform/windows/font_win32.c
+        src/platform/windows/render_wgl.c
     )
 elseif(ANDROID)
     list(APPEND CROSSOS_SOURCES
@@ -52,6 +53,7 @@ elseif(ANDROID)
         src/platform/android/bluetooth_android.c
         src/platform/android/camera_android.c
         src/platform/android/font_android.c
+        src/platform/android/render_egl.c
     )
 elseif(UNIX)
     list(APPEND CROSSOS_SOURCES
@@ -60,6 +62,7 @@ elseif(UNIX)
         src/platform/linux/bluetooth_linux.c
         src/platform/linux/camera_linux.c
         src/platform/linux/font_linux.c
+        src/platform/linux/render_glx.c
     )
 endif()
 
@@ -78,6 +81,7 @@ target_include_directories(crossos
 if(WIN32)
     target_link_libraries(crossos PUBLIC user32 gdi32)
     target_link_libraries(crossos PUBLIC winmm)
+    target_link_libraries(crossos PUBLIC opengl32)
 
 elseif(ANDROID)
     find_library(ANDROID_LIB      android)
@@ -138,6 +142,22 @@ elseif(UNIX)
 
     # libm – required by font.c (roundf, ceilf via stb_truetype)
     target_link_libraries(crossos PUBLIC m)
+
+    # OpenGL + GLX  (render_glx.c – required for OPENGL renderer backend)
+    find_package(OpenGL QUIET)
+    if(OpenGL_FOUND OR OPENGL_FOUND)
+        target_link_libraries(crossos PUBLIC OpenGL::GL)
+    else()
+        # Fall back to explicit -lGL if CMake's find_package misses it
+        find_library(GL_LIB GL)
+        if(GL_LIB)
+            target_link_libraries(crossos PUBLIC ${GL_LIB})
+        else()
+            message(WARNING
+                "libGL not found. OpenGL renderer backend disabled on Linux. "
+                "Install libgl-dev to enable it.")
+        endif()
+    endif()
 
     # BlueZ Bluetooth (optional – scan/connect through kernel HCI sockets)
     find_library(BLUETOOTH_LIB bluetooth)

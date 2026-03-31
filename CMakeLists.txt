@@ -15,6 +15,16 @@ set(CMAKE_C_EXTENSIONS OFF)
 option(CROSSOS_BUILD_EXAMPLES "Build example applications" ON)
 option(CROSSOS_BUILD_TESTS    "Build the test suite"       ON)
 
+# ── Telemetry / analytics (debug builds) ─────────────────────────────────
+option(CROSSOS_TELEMETRY
+    "Enable live log/analytics telemetry sent to the analytics server" OFF)
+
+set(CROSSOS_TELEMETRY_URL ""
+    CACHE STRING "Analytics server base URL (e.g. https://mysite.com/crossos)")
+
+set(CROSSOS_TELEMETRY_SECRET "Xk9m2pQr7vY3E4wA"
+    CACHE STRING "Shared secret for auth-token generation (must match server)")
+
 # ── Source files ─────────────────────────────────────────────────────────
 set(CROSSOS_SOURCES
     src/core/init.c
@@ -35,6 +45,10 @@ set(CROSSOS_SOURCES
     src/core/web_backend_fallback.c
     src/core/scanner.c
 )
+
+if(CROSSOS_TELEMETRY)
+    list(APPEND CROSSOS_SOURCES src/core/telemetry.c)
+endif()
 
 if(WIN32)
     list(APPEND CROSSOS_SOURCES
@@ -76,6 +90,18 @@ target_include_directories(crossos
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/thirdparty
 )
+
+# ── Telemetry compile definitions ────────────────────────────────────────
+if(CROSSOS_TELEMETRY)
+    target_compile_definitions(crossos PUBLIC
+        CROSSOS_TELEMETRY=1
+        CROSSOS_TELEMETRY_URL_DEFAULT="${CROSSOS_TELEMETRY_URL}"
+        CROSSOS_TELEMETRY_SECRET_DEFAULT="${CROSSOS_TELEMETRY_SECRET}"
+    )
+    message(STATUS "CrossOS telemetry ENABLED  URL='${CROSSOS_TELEMETRY_URL}'")
+else()
+    target_compile_definitions(crossos PUBLIC CROSSOS_TELEMETRY=0)
+endif()
 
 # ── Platform-specific dependencies ───────────────────────────────────────
 if(WIN32)

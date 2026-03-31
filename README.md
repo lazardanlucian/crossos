@@ -25,6 +25,7 @@ CrossOS now also includes utility modules for file I/O, HTTP API calls, basic au
 | Optical backend plug-in API | ✔ | ✔ | ✔ |
 | SDK drawing primitives | ✔ | ✔ | ✔ |
 | CrossOS renderer abstraction (AUTO/software/OpenGL bootstrap) | ✔ | ✔ | ✔ |
+| OpenGL context (GLX/WGL) via `crossos_renderer_make_current` + `crossos_renderer_present` | ✔ (WGL) | ✔ (GLX) | planned (EGL stub) |
 | SDK UI widgets (label/button/list/progress/dropdown/tree header) | ✔ | ✔ | ✔ |
 | Native file picker API | ✔ | ✔ (zenity/kdialog fallback) | planned |
 | UI layout helper (responsive column flow) | ✔ | ✔ | ✔ |

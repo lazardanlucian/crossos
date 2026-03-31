@@ -1,3 +1,10 @@
+/* _GNU_SOURCE is required on Linux to prevent ALSA headers from
+ * redefining struct timespec (already declared in <time.h> / <bits/types/>)
+ * and to expose usleep() from <unistd.h> under strict C11. */
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#  define _GNU_SOURCE
+#endif
+
 #include <crossos/audio.h>
 
 #include <stdlib.h>

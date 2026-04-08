@@ -964,7 +964,7 @@ static void render(app_t *app)
                    P_PAD, draw_y, PANEL_W - P_PAD * 2);
         draw_y += P_LABEL_H + 2 + P_SLIDER_H + P_PAD;
         reg_slider(&app->params.saturation, -100.0f, 100.0f,
-                   P_PAD, draw_y, PANEL_W - P_PAD * 2
+                   P_PAD, draw_y, PANEL_W - P_PAD * 2);
         break;
     case TAB_DETAIL:
         draw_panel_detail(&fb, app->font_small, app, 0, draw_y,

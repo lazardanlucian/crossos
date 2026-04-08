@@ -61,6 +61,30 @@ extern "C"
 
     crossos_result_t crossos_renderer_end_software_frame(crossos_renderer_t *renderer);
 
+    /**
+     * Make the renderer's OpenGL context current on the calling thread.
+     * Must be called before issuing any OpenGL draw calls.
+     * Returns CROSSOS_ERR_UNSUPPORT if this is not an OpenGL renderer.
+     */
+    crossos_result_t crossos_renderer_make_current(crossos_renderer_t *renderer);
+
+    /**
+     * Present the rendered frame:
+     *   - OpenGL : calls SwapBuffers / glXSwapBuffers (double-buffered).
+     *   - Software: equivalent to crossos_renderer_end_software_frame().
+     *               Only valid after a successful begin_software_frame() call.
+     */
+    crossos_result_t crossos_renderer_present(crossos_renderer_t *renderer);
+
+    /**
+     * Return the platform-specific OpenGL context handle:
+     *   Linux   → GLXContext
+     *   Windows → HGLRC
+     *   Android → EGLContext (stub: NULL until EGL backend is implemented)
+     * Returns NULL if this is not an OpenGL renderer.
+     */
+    void *crossos_renderer_get_gl_context(const crossos_renderer_t *renderer);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

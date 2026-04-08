@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(crossos
-    VERSION   0.5.0
+    VERSION   0.6.0
     LANGUAGES C
     DESCRIPTION "Cross-platform display driver / input SDK"
 )
@@ -14,6 +14,16 @@ set(CMAKE_C_EXTENSIONS OFF)
 # ── Options ──────────────────────────────────────────────────────────────
 option(CROSSOS_BUILD_EXAMPLES "Build applications" ON)
 option(CROSSOS_BUILD_TESTS    "Build the test suite"       ON)
+
+# ── Telemetry / analytics (debug builds) ─────────────────────────────────
+option(CROSSOS_TELEMETRY
+    "Enable live log/analytics telemetry sent to the analytics server" OFF)
+
+set(CROSSOS_TELEMETRY_URL ""
+    CACHE STRING "Analytics server base URL (e.g. https://mysite.com/crossos)")
+
+set(CROSSOS_TELEMETRY_SECRET "Xk9m2pQr7vY3E4wA"
+    CACHE STRING "Shared secret for auth-token generation (must match server)")
 
 # ── Source files ─────────────────────────────────────────────────────────
 set(CROSSOS_SOURCES
@@ -36,6 +46,10 @@ set(CROSSOS_SOURCES
     src/core/scanner.c
 )
 
+if(CROSSOS_TELEMETRY)
+    list(APPEND CROSSOS_SOURCES src/core/telemetry.c)
+endif()
+
 if(WIN32)
     list(APPEND CROSSOS_SOURCES
         src/platform/windows/window_win32.c
@@ -43,6 +57,7 @@ if(WIN32)
         src/platform/windows/bluetooth_win32.c
         src/platform/windows/camera_win32.c
         src/platform/windows/font_win32.c
+        src/platform/windows/render_wgl.c
     )
 elseif(ANDROID)
     list(APPEND CROSSOS_SOURCES
@@ -52,6 +67,7 @@ elseif(ANDROID)
         src/platform/android/bluetooth_android.c
         src/platform/android/camera_android.c
         src/platform/android/font_android.c
+        src/platform/android/render_egl.c
     )
 elseif(UNIX)
     list(APPEND CROSSOS_SOURCES
@@ -62,6 +78,7 @@ elseif(UNIX)
         src/platform/linux/bluetooth_linux.c
         src/platform/linux/camera_linux.c
         src/platform/linux/font_linux.c
+        src/platform/linux/render_glx.c
     )
 endif()
 
@@ -76,10 +93,23 @@ target_include_directories(crossos
         ${CMAKE_CURRENT_SOURCE_DIR}/src/thirdparty
 )
 
+# ── Telemetry compile definitions ────────────────────────────────────────
+if(CROSSOS_TELEMETRY)
+    target_compile_definitions(crossos PUBLIC
+        CROSSOS_TELEMETRY=1
+        CROSSOS_TELEMETRY_URL_DEFAULT="${CROSSOS_TELEMETRY_URL}"
+        CROSSOS_TELEMETRY_SECRET_DEFAULT="${CROSSOS_TELEMETRY_SECRET}"
+    )
+    message(STATUS "CrossOS telemetry ENABLED  URL='${CROSSOS_TELEMETRY_URL}'")
+else()
+    target_compile_definitions(crossos PUBLIC CROSSOS_TELEMETRY=0)
+endif()
+
 # ── Platform-specific dependencies ───────────────────────────────────────
 if(WIN32)
     target_link_libraries(crossos PUBLIC user32 gdi32)
     target_link_libraries(crossos PUBLIC winmm)
+    target_link_libraries(crossos PUBLIC opengl32)
 
 elseif(ANDROID)
     find_library(ANDROID_LIB      android)
@@ -145,6 +175,22 @@ elseif(UNIX)
 
     # libm – required by font.c (roundf, ceilf via stb_truetype)
     target_link_libraries(crossos PUBLIC m)
+
+    # OpenGL + GLX  (render_glx.c – required for OPENGL renderer backend)
+    find_package(OpenGL QUIET)
+    if(OpenGL_FOUND OR OPENGL_FOUND)
+        target_link_libraries(crossos PUBLIC OpenGL::GL)
+    else()
+        # Fall back to explicit -lGL if CMake's find_package misses it
+        find_library(GL_LIB GL)
+        if(GL_LIB)
+            target_link_libraries(crossos PUBLIC ${GL_LIB})
+        else()
+            message(WARNING
+                "libGL not found. OpenGL renderer backend disabled on Linux. "
+                "Install libgl-dev to enable it.")
+        endif()
+    endif()
 
     # BlueZ Bluetooth (optional – scan/connect through kernel HCI sockets)
     find_library(BLUETOOTH_LIB bluetooth)

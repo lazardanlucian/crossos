@@ -93,10 +93,22 @@ crossos_result_t crossos_dialog_pick_files(const char *title,
 
     OPENFILENAMEW ofn;
     memset(&ofn, 0, sizeof(ofn));
+
+    static const wchar_t raw_filter[] =
+        L"RAW/JPEG Files (*.raf;*.raw;*.jpg;*.jpeg;*.ppm;*.pgm)\0"
+        L"*.raf;*.RAF;*.raw;*.RAW;*.jpg;*.JPG;*.jpeg;*.JPEG;*.ppm;*.PPM;*.pgm;*.PGM\0"
+        L"All Files (*.*)\0*.*\0\0";
+
+    int raw_mode = (title && strstr(title, "RAW") != NULL);
+
     ofn.lStructSize = sizeof(ofn);
     ofn.lpstrFile = buffer;
     ofn.nMaxFile = (DWORD)(sizeof(buffer) / sizeof(buffer[0]));
     ofn.lpstrTitle = (title_w[0] != L'\0') ? title_w : NULL;
+    if (raw_mode)
+    {
+        ofn.lpstrFilter = raw_filter;
+    }
     ofn.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
     if (allow_multiple)
     {
@@ -245,6 +257,7 @@ crossos_result_t crossos_dialog_pick_files(const char *title,
     char cmd[2048];
     int use_zenity = crossos__command_exists("zenity");
     int use_kdialog = !use_zenity && crossos__command_exists("kdialog");
+    int raw_mode = (title && strstr(title, "RAW") != NULL);
 
     if (!use_zenity && !use_kdialog)
     {
@@ -254,16 +267,37 @@ crossos_result_t crossos_dialog_pick_files(const char *title,
 
     if (use_zenity)
     {
-        snprintf(cmd, sizeof(cmd),
-                 "zenity --file-selection %s --separator='|' %s 2>/dev/null",
-                 allow_multiple ? "--multiple" : "",
-                 (title && title[0]) ? "--title=\"CrossOS File Picker\"" : "");
+        if (raw_mode)
+        {
+            snprintf(cmd, sizeof(cmd),
+                     "zenity --file-selection %s --separator='|' "
+                     "--file-filter='RAW/JPEG | *.raf *.RAF *.raw *.RAW *.jpg *.JPG *.jpeg *.JPEG *.ppm *.PPM *.pgm *.PGM' "
+                     "--file-filter='All files | *' %s 2>/dev/null",
+                     allow_multiple ? "--multiple" : "",
+                     (title && title[0]) ? "--title=\"CrossOS File Picker\"" : "");
+        }
+        else
+        {
+            snprintf(cmd, sizeof(cmd),
+                     "zenity --file-selection %s --separator='|' %s 2>/dev/null",
+                     allow_multiple ? "--multiple" : "",
+                     (title && title[0]) ? "--title=\"CrossOS File Picker\"" : "");
+        }
     }
     else
     {
-        snprintf(cmd, sizeof(cmd),
-                 "kdialog --getopenfilename %s 2>/dev/null",
-                 allow_multiple ? "--multiple --separate-output" : "");
+        if (raw_mode)
+        {
+            snprintf(cmd, sizeof(cmd),
+                     "kdialog --getopenfilename %s \"*.raf *.RAF *.raw *.RAW *.jpg *.JPG *.jpeg *.JPEG *.ppm *.PPM *.pgm *.PGM|RAW/JPEG files\" 2>/dev/null",
+                     allow_multiple ? "--multiple --separate-output" : "");
+        }
+        else
+        {
+            snprintf(cmd, sizeof(cmd),
+                     "kdialog --getopenfilename %s 2>/dev/null",
+                     allow_multiple ? "--multiple --separate-output" : "");
+        }
     }
 
     FILE *pipe = popen(cmd, "r");

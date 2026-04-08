@@ -48,6 +48,7 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+#include <pthread.h>
 #else
 #include <sys/select.h>
 #include <sys/time.h>
@@ -244,6 +245,29 @@ static int rect_hit(float mx, float my, int x, int y, int w, int h)
 {
     return mx >= (float)x && mx < (float)(x + w) &&
            my >= (float)y && my < (float)(y + h);
+}
+
+static int path_ext_eq(const char *path, const char *ext)
+{
+    const char *dot = strrchr(path, '.');
+    if (!dot || !dot[1])
+        return 0;
+    dot++;
+
+    while (*dot && *ext)
+    {
+        char a = *dot;
+        char b = *ext;
+        if (a >= 'A' && a <= 'Z')
+            a = (char)(a - 'A' + 'a');
+        if (b >= 'A' && b <= 'Z')
+            b = (char)(b - 'A' + 'a');
+        if (a != b)
+            return 0;
+        dot++;
+        ext++;
+    }
+    return (*dot == '\0' && *ext == '\0');
 }
 
 static void sleep_ms(int ms)
@@ -1455,8 +1479,16 @@ static void load_image(app_t *app, const char *path)
     int rc = er_raw_image_load(path, &app->raw);
     if (rc != 0)
     {
-        snprintf(app->status_msg, sizeof(app->status_msg),
-                 "Failed to load: %.120s", path);
+        if (path_ext_eq(path, "raf"))
+        {
+            snprintf(app->status_msg, sizeof(app->status_msg),
+                     "Failed to load RAF (enable LibRaw or install dcraw): %.72s", path);
+        }
+        else
+        {
+            snprintf(app->status_msg, sizeof(app->status_msg),
+                     "Failed to load: %.120s", path);
+        }
         return;
     }
 
@@ -1501,7 +1533,7 @@ static void handle_open(app_t *app)
 {
     crossos_dialog_file_list_t files;
     memset(&files, 0, sizeof(files));
-    if (crossos_dialog_pick_files("Open RAW Image", 0, &files) != CROSSOS_OK)
+    if (crossos_dialog_pick_files("Open RAW/JPEG Image", 0, &files) != CROSSOS_OK)
         return;
     if (files.count > 0)
         load_image(app, files.items[0]);
@@ -1966,9 +1998,17 @@ int main(int argc, char **argv)
         /* Trigger re-process if any parameter changed (not while previewing before) */
         if (app.dirty && app.has_image && app.worker_running && !app.show_before)
         {
-            worker_trigger(&app.worker, &app.raw, &app.params);
-            app.processing = 1;
-            app.dirty = 0;
+            int interactive_drag = app.dragging_slider || (g_curve_ctx.drag_pt >= 0);
+            if (interactive_drag && worker_is_busy(&app.worker))
+            {
+                /* Coalesce drag updates: wait until worker is idle, then process latest state. */
+            }
+            else
+            {
+                worker_trigger(&app.worker, &app.raw, &app.params);
+                app.processing = 1;
+                app.dirty = 0;
+            }
         }
 
         /* Poll for finished result */

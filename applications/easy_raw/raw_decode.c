@@ -17,6 +17,29 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <ctype.h>
+
+#define STB_IMAGE_IMPLEMENTATION
+#include "../../src/thirdparty/stb_image.h"
+
+#if defined(EASYRAW_HAS_LIBRAW)
+#include <libraw/libraw.h>
+#endif
+
+#if defined(_WIN32)
+#include <windows.h>
+#define ER_POPEN _popen
+#define ER_PCLOSE _pclose
+#else
+#define ER_POPEN popen
+#define ER_PCLOSE pclose
+#endif
+
+static int path_ext_eq(const char *path, const char *ext);
+
+#if defined(EASYRAW_HAS_LIBRAW)
+static int decode_with_libraw(const char *path, er_raw_image_t *out);
+#endif
 
 /* ── Helpers ─────────────────────────────────────────────────────────── */
 
@@ -152,6 +175,174 @@ static int decode_ppm(FILE *f, er_raw_image_t *out)
         free(row);
     }
     (void)n;
+    return 0;
+}
+
+/* ── JPEG/PNG decoder via stb_image ─────────────────────────────────── */
+
+static int decode_stb_image_file(const char *path, er_raw_image_t *out)
+{
+    int w = 0, h = 0, ch = 0;
+    unsigned char *pix = stbi_load(path, &w, &h, &ch, 3);
+    if (!pix || w <= 0 || h <= 0)
+        return -1;
+
+    /* Lightweight EXIF orientation fix for JPEGs. */
+    int ori = 1;
+    if (path_ext_eq(path, "jpg") || path_ext_eq(path, "jpeg"))
+    {
+        FILE *jf = fopen(path, "rb");
+        if (jf)
+        {
+            int b0 = fgetc(jf), b1 = fgetc(jf);
+            if (b0 == 0xFF && b1 == 0xD8)
+            {
+                for (;;)
+                {
+                    int m0 = fgetc(jf);
+                    int marker = fgetc(jf);
+                    if (m0 != 0xFF || marker == EOF)
+                        break;
+                    while (marker == 0xFF)
+                        marker = fgetc(jf);
+                    if (marker == 0xD9 || marker == 0xDA)
+                        break;
+                    int l0 = fgetc(jf), l1 = fgetc(jf);
+                    if (l0 == EOF || l1 == EOF)
+                        break;
+                    int seg_len = (l0 << 8) | l1;
+                    if (seg_len < 2)
+                        break;
+                    seg_len -= 2;
+
+                    if (marker == 0xE1 && seg_len >= 14)
+                    {
+                        unsigned char *seg = (unsigned char *)malloc((size_t)seg_len);
+                        if (!seg)
+                            break;
+                        if (fread(seg, 1, (size_t)seg_len, jf) != (size_t)seg_len)
+                        {
+                            free(seg);
+                            break;
+                        }
+
+                        if (memcmp(seg, "Exif\0\0", 6) == 0)
+                        {
+                            const unsigned char *t = seg + 6;
+                            int little = (t[0] == 'I' && t[1] == 'I');
+                            int big = (t[0] == 'M' && t[1] == 'M');
+                            if ((little || big) && seg_len >= 6 + 8)
+                            {
+#define U16P(p) (little ? (unsigned)((p)[0] | ((p)[1] << 8)) : (unsigned)(((p)[0] << 8) | (p)[1]))
+#define U32P(p) (little ? (unsigned)((p)[0] | ((p)[1] << 8) | ((p)[2] << 16) | ((p)[3] << 24)) : (unsigned)(((p)[0] << 24) | ((p)[1] << 16) | ((p)[2] << 8) | (p)[3]))
+                                unsigned magic = U16P(t + 2);
+                                unsigned ifd0 = U32P(t + 4);
+                                if (magic == 42 && ifd0 + 2 <= (unsigned)(seg_len - 6))
+                                {
+                                    const unsigned char *ifd = t + ifd0;
+                                    unsigned nent = U16P(ifd);
+                                    for (unsigned i = 0; i < nent; i++)
+                                    {
+                                        const unsigned char *e = ifd + 2 + i * 12;
+                                        if (e + 12 > seg + seg_len)
+                                            break;
+                                        unsigned tag = U16P(e + 0);
+                                        unsigned typ = U16P(e + 2);
+                                        unsigned cnt = U32P(e + 4);
+                                        if (tag == 0x0112 && typ == 3 && cnt >= 1)
+                                        {
+                                            unsigned v = U16P(e + 8);
+                                            if (v >= 1 && v <= 8)
+                                                ori = (int)v;
+                                            break;
+                                        }
+                                    }
+                                }
+#undef U16P
+#undef U32P
+                            }
+                        }
+
+                        free(seg);
+                        if (ori != 1)
+                            break;
+                    }
+                    else
+                    {
+                        fseek(jf, seg_len, SEEK_CUR);
+                    }
+                }
+            }
+            fclose(jf);
+        }
+    }
+
+    if (ori != 1)
+    {
+        int nw = (ori >= 5 && ori <= 8) ? h : w;
+        int nh = (ori >= 5 && ori <= 8) ? w : h;
+        unsigned char *rot = (unsigned char *)malloc((size_t)nw * nh * 3);
+        if (!rot)
+        {
+            stbi_image_free(pix);
+            return -1;
+        }
+        for (int y = 0; y < nh; y++)
+        {
+            for (int x = 0; x < nw; x++)
+            {
+                int sx = x, sy = y;
+                switch (ori)
+                {
+                case 2: sx = w - 1 - x; sy = y; break;
+                case 3: sx = w - 1 - x; sy = h - 1 - y; break;
+                case 4: sx = x; sy = h - 1 - y; break;
+                case 5: sx = y; sy = x; break;
+                case 6: sx = y; sy = h - 1 - x; break;
+                case 7: sx = w - 1 - y; sy = h - 1 - x; break;
+                case 8: sx = w - 1 - y; sy = x; break;
+                default: break;
+                }
+                const unsigned char *sp = pix + ((size_t)sy * w + sx) * 3;
+                unsigned char *dp = rot + ((size_t)y * nw + x) * 3;
+                dp[0] = sp[0];
+                dp[1] = sp[1];
+                dp[2] = sp[2];
+            }
+        }
+        stbi_image_free(pix);
+        pix = rot;
+        w = nw;
+        h = nh;
+    }
+
+    out->width = w;
+    out->height = h;
+    if (planes_alloc(out) != 0)
+    {
+        stbi_image_free(pix);
+        return -1;
+    }
+
+    int n = w * h;
+    for (int i = 0; i < n; i++)
+    {
+        float sr = (float)pix[i * 3 + 0] / 255.0f;
+        float sg = (float)pix[i * 3 + 1] / 255.0f;
+        float sb = (float)pix[i * 3 + 2] / 255.0f;
+
+        /* Convert display-referred sRGB into linear working space. */
+        out->planes[0][i] = (sr <= 0.04045f) ? (sr / 12.92f) : powf((sr + 0.055f) / 1.055f, 2.4f);
+        out->planes[1][i] = (sg <= 0.04045f) ? (sg / 12.92f) : powf((sg + 0.055f) / 1.055f, 2.4f);
+        out->planes[2][i] = (sb <= 0.04045f) ? (sb / 12.92f) : powf((sb + 0.055f) / 1.055f, 2.4f);
+    }
+
+    out->cam_matrix[0][0] = 1.0;
+    out->cam_matrix[1][1] = 1.0;
+    out->cam_matrix[2][2] = 1.0;
+    out->white_level = 1.0;
+
+    stbi_image_free(pix);
     return 0;
 }
 
@@ -441,6 +632,154 @@ static int decode_raw10(FILE *f, er_raw_image_t *out)
     return 0;
 }
 
+/* ── RAF fallback via dcraw (if installed) ──────────────────────────── */
+
+static int path_ext_eq(const char *path, const char *ext)
+{
+    const char *dot = strrchr(path, '.');
+    if (!dot || !dot[1])
+        return 0;
+    dot++;
+
+    while (*dot && *ext)
+    {
+        if (tolower((unsigned char)*dot) != tolower((unsigned char)*ext))
+            return 0;
+        dot++;
+        ext++;
+    }
+    return (*dot == '\0' && *ext == '\0');
+}
+
+#if defined(EASYRAW_HAS_LIBRAW)
+static int decode_with_libraw(const char *path, er_raw_image_t *out)
+{
+    libraw_data_t *lr = libraw_init(0);
+    if (!lr)
+        return -1;
+
+    lr->params.use_camera_wb = 1;
+    lr->params.no_auto_bright = 1;
+    lr->params.output_bps = 16;
+
+    int rc = libraw_open_file(lr, path);
+    if (rc != LIBRAW_SUCCESS)
+    {
+        libraw_close(lr);
+        return -1;
+    }
+
+    rc = libraw_unpack(lr);
+    if (rc != LIBRAW_SUCCESS)
+    {
+        libraw_close(lr);
+        return -1;
+    }
+
+    rc = libraw_dcraw_process(lr);
+    if (rc != LIBRAW_SUCCESS)
+    {
+        libraw_close(lr);
+        return -1;
+    }
+
+    int err = LIBRAW_SUCCESS;
+    libraw_processed_image_t *img = libraw_dcraw_make_mem_image(lr, &err);
+    if (!img || err != LIBRAW_SUCCESS)
+    {
+        if (img)
+            libraw_dcraw_clear_mem(img);
+        libraw_close(lr);
+        return -1;
+    }
+
+    if (img->type != LIBRAW_IMAGE_BITMAP || img->colors < 3 || img->width <= 0 || img->height <= 0)
+    {
+        libraw_dcraw_clear_mem(img);
+        libraw_close(lr);
+        return -1;
+    }
+
+    out->width = (int)img->width;
+    out->height = (int)img->height;
+    if (planes_alloc(out) != 0)
+    {
+        libraw_dcraw_clear_mem(img);
+        libraw_close(lr);
+        return -1;
+    }
+
+    int n = out->width * out->height;
+    int ch = img->colors;
+    int bits = img->bits;
+    const float scale = (bits > 8) ? (1.0f / 65535.0f) : (1.0f / 255.0f);
+
+    if (bits > 8)
+    {
+        const uint16_t *p = (const uint16_t *)img->data;
+        for (int i = 0; i < n; i++)
+        {
+            int b = i * ch;
+            out->planes[0][i] = (float)p[b + 0] * scale;
+            out->planes[1][i] = (float)p[b + 1] * scale;
+            out->planes[2][i] = (float)p[b + 2] * scale;
+        }
+    }
+    else
+    {
+        const uint8_t *p = (const uint8_t *)img->data;
+        for (int i = 0; i < n; i++)
+        {
+            int b = i * ch;
+            out->planes[0][i] = (float)p[b + 0] * scale;
+            out->planes[1][i] = (float)p[b + 1] * scale;
+            out->planes[2][i] = (float)p[b + 2] * scale;
+        }
+    }
+
+    out->cam_matrix[0][0] = 1.0;
+    out->cam_matrix[1][1] = 1.0;
+    out->cam_matrix[2][2] = 1.0;
+    out->white_level = 1.0;
+
+    libraw_dcraw_clear_mem(img);
+    libraw_close(lr);
+    return 0;
+}
+#endif
+
+static int decode_raf_via_dcraw(const char *path, er_raw_image_t *out)
+{
+    int has_dcraw = 0;
+#if defined(_WIN32)
+    has_dcraw = (system("where dcraw >NUL 2>NUL") == 0);
+#else
+    has_dcraw = (system("command -v dcraw >/dev/null 2>&1") == 0);
+#endif
+    if (!has_dcraw)
+        return -1;
+
+    char cmd[2048];
+    snprintf(cmd, sizeof(cmd), "dcraw -c -w \"%s\" 2>/dev/null", path);
+
+    FILE *pipe = ER_POPEN(cmd, "rb");
+    if (!pipe)
+        return -1;
+
+    uint8_t magic[2];
+    size_t nr = fread(magic, 1, 2, pipe);
+    int rc = -1;
+    if (nr == 2 && magic[0] == 'P' && (magic[1] == '6' || magic[1] == '5'))
+    {
+        rc = decode_ppm(pipe, out);
+    }
+
+    ER_PCLOSE(pipe);
+    if (rc != 0)
+        er_raw_image_free(out);
+    return rc;
+}
+
 /* ── Public API ──────────────────────────────────────────────────────── */
 
 int er_raw_image_load(const char *path, er_raw_image_t *out)
@@ -448,6 +787,21 @@ int er_raw_image_load(const char *path, er_raw_image_t *out)
     if (!path || !out)
         return -1;
     memset(out, 0, sizeof(*out));
+
+    if (path_ext_eq(path, "jpg") || path_ext_eq(path, "jpeg") ||
+        path_ext_eq(path, "png"))
+    {
+        return decode_stb_image_file(path, out);
+    }
+
+    if (path_ext_eq(path, "raf"))
+    {
+#if defined(EASYRAW_HAS_LIBRAW)
+        if (decode_with_libraw(path, out) == 0)
+            return 0;
+#endif
+        return decode_raf_via_dcraw(path, out);
+    }
 
     FILE *f = fopen(path, "rb");
     if (!f)

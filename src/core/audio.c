@@ -165,8 +165,11 @@ void crossos_sound_stop(void)
 }
 
 /* ---- PCM streaming via AAudio (API 26+) ---- */
-#include <aaudio/AAudio.h>
 #include <string.h>
+
+#if !defined(__ANDROID_API__) || (__ANDROID_API__ >= 26)
+
+#include <aaudio/AAudio.h>
 
 struct crossos_audio_context {
     AAudioStream *stream;
@@ -254,6 +257,39 @@ void crossos_audio_close(crossos_audio_context_t *ctx)
     AAudioStream_close(c->stream);
     free(c);
 }
+
+#else
+
+struct crossos_audio_context {
+    int unused;
+};
+
+crossos_result_t crossos_audio_open(int sample_rate, int buffer_frames,
+                                    crossos_audio_callback_t callback,
+                                    void *user_data,
+                                    crossos_audio_context_t **out_ctx)
+{
+    (void)sample_rate;
+    (void)buffer_frames;
+    (void)callback;
+    (void)user_data;
+    (void)out_ctx;
+    crossos__set_error("audio_open: Android PCM streaming requires API level 26+");
+    return CROSSOS_ERR_UNSUPPORT;
+}
+
+void crossos_audio_set_paused(crossos_audio_context_t *ctx, int paused)
+{
+    (void)ctx;
+    (void)paused;
+}
+
+void crossos_audio_close(crossos_audio_context_t *ctx)
+{
+    (void)ctx;
+}
+
+#endif
 
 void crossos_audio_beep(int freq_hz, int duration_ms)
 {

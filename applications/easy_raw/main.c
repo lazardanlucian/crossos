@@ -1296,7 +1296,8 @@ static int preset_load(er_params_t *p, const char *path)
         continue;                \
     }
             RF(exposure_ev)
-            RF(wb_temp) RF(wb_tint)
+            RF(wb_temp)
+            RF(wb_tint)
                 RF(blacks) RF(shadows) RF(midtones) RF(highlights) RF(whites)
                     RF(contrast) RF(vibrance) RF(saturation)
                         RF(highlight_recovery) RF(sharpening) RF(noise_reduction)

@@ -29,6 +29,11 @@
 #include <termios.h>
 #include <unistd.h>
 
+/* Ensure usleep is available */
+#ifndef _DEFAULT_SOURCE
+#define _DEFAULT_SOURCE 1
+#endif
+
 extern volatile int crossos__quit_requested;
 extern void crossos__set_error(const char *fmt, ...);
 
@@ -809,8 +814,125 @@ static crossos_result_t term_ui_surface_present(crossos_surface_t *surf)
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Event handling (stub - for now, just basic input)
+   Event handling - keyboard and mouse input parsing
  ─────────────────────────────────────────────────────────────────────────── */
+
+static void push_key_event(int keycode, int is_char, unsigned codepoint)
+{
+    crossos_event_t ev;
+    memset(&ev, 0, sizeof(ev));
+
+    if (is_char && codepoint > 0)
+    {
+        ev.type = CROSSOS_EVENT_CHAR;
+        ev.character.codepoint = codepoint;
+    }
+    else
+    {
+        ev.type = CROSSOS_EVENT_KEY_DOWN;
+        ev.key.keycode = keycode;
+        ev.key.mods = CROSSOS_MOD_NONE;
+    }
+    ev.window = s_primary_window;
+    push_event(&ev);
+}
+
+/* Parse escape sequences from terminal input */
+static int parse_escape_sequence(const char *buf, size_t len, size_t *consumed)
+{
+    if (len < 2 || buf[0] != '\033')
+        return 0;
+
+    *consumed = 2;
+
+    /* Arrow keys: ESC [ A/B/C/D */
+    if (buf[1] == '[' && len >= 3)
+    {
+        switch (buf[2])
+        {
+        case 'A':
+            push_key_event(CROSSOS_KEY_UP, 0, 0);
+            return 1;
+        case 'B':
+            push_key_event(CROSSOS_KEY_DOWN, 0, 0);
+            return 1;
+        case 'C':
+            push_key_event(CROSSOS_KEY_RIGHT, 0, 0);
+            return 1;
+        case 'D':
+            push_key_event(CROSSOS_KEY_LEFT, 0, 0);
+            return 1;
+        case 'H':
+            push_key_event(CROSSOS_KEY_HOME, 0, 0);
+            return 1;
+        case 'F':
+            push_key_event(CROSSOS_KEY_END, 0, 0);
+            return 1;
+        default:
+            break;
+        }
+
+        /* Function keys and special keys: ESC [ number ~ */
+        if (isdigit((unsigned char)buf[2]))
+        {
+            size_t i = 2;
+            int code = 0;
+            while (i < len && isdigit((unsigned char)buf[i]))
+            {
+                code = code * 10 + (buf[i] - '0');
+                i++;
+            }
+            if (i < len && buf[i] == '~')
+            {
+                *consumed = i + 1;
+                switch (code)
+                {
+                case 2:
+                    push_key_event(CROSSOS_KEY_INSERT, 0, 0);
+                    return 1;
+                case 3:
+                    push_key_event(CROSSOS_KEY_DELETE, 0, 0);
+                    return 1;
+                case 5:
+                    push_key_event(CROSSOS_KEY_PAGE_UP, 0, 0);
+                    return 1;
+                case 6:
+                    push_key_event(CROSSOS_KEY_PAGE_DOWN, 0, 0);
+                    return 1;
+                default:
+                    return 1;
+                }
+            }
+        }
+    }
+
+    /* Function keys F1-F4: ESC O P/Q/R/S */
+    if (buf[1] == 'O' && len >= 3)
+    {
+        switch (buf[2])
+        {
+        case 'P':
+            push_key_event(CROSSOS_KEY_F1, 0, 0);
+            return 1;
+        case 'Q':
+            push_key_event(CROSSOS_KEY_F2, 0, 0);
+            return 1;
+        case 'R':
+            push_key_event(CROSSOS_KEY_F3, 0, 0);
+            return 1;
+        case 'S':
+            push_key_event(CROSSOS_KEY_F4, 0, 0);
+            return 1;
+        default:
+            break;
+        }
+    }
+
+    /* Default: just ESC key */
+    push_key_event(CROSSOS_KEY_ESCAPE, 0, 0);
+    *consumed = 1;
+    return 1;
+}
 
 static void process_input_bytes(void)
 {
@@ -819,10 +941,70 @@ static void process_input_bytes(void)
     if (n <= 0)
         return;
 
-    for (ssize_t i = 0; i < n; i++)
+    /* Append to input buffer */
+    for (ssize_t i = 0; i < n && s_input_len < sizeof(s_input_buf) - 1; i++)
     {
-        if (s_input_len < sizeof(s_input_buf) - 1)
-            s_input_buf[s_input_len++] = buf[i];
+        s_input_buf[s_input_len++] = buf[i];
+    }
+
+    /* Parse buffered input into events */
+    size_t offset = 0;
+    while (offset < s_input_len)
+    {
+        unsigned char c = (unsigned char)s_input_buf[offset];
+
+        /* Escape sequence */
+        if (c == '\033')
+        {
+            size_t consumed = 0;
+            if (parse_escape_sequence(s_input_buf + offset, s_input_len - offset, &consumed))
+            {
+                offset += consumed;
+                continue;
+            }
+            /* Incomplete sequence, wait for more data */
+            break;
+        }
+
+        /* Control characters */
+        if (c == '\r' || c == '\n')
+        {
+            push_key_event(CROSSOS_KEY_ENTER, 0, 0);
+            offset++;
+        }
+        else if (c == '\t')
+        {
+            push_key_event(CROSSOS_KEY_TAB, 0, 0);
+            offset++;
+        }
+        else if (c == 127 || c == 8)
+        {
+            push_key_event(CROSSOS_KEY_BACKSPACE, 0, 0);
+            offset++;
+        }
+        /* Printable ASCII */
+        else if (c >= 32 && c < 127)
+        {
+            push_key_event((int)c, 1, c);
+            offset++;
+        }
+        /* Ctrl+letter */
+        else if (c >= 1 && c <= 26)
+        {
+            push_key_event(CROSSOS_KEY_A + c - 1, 0, 0);
+            offset++;
+        }
+        else
+        {
+            offset++;
+        }
+    }
+
+    /* Remove processed bytes from buffer */
+    if (offset > 0)
+    {
+        memmove(s_input_buf, s_input_buf + offset, s_input_len - offset);
+        s_input_len -= offset;
     }
 }
 

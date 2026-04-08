@@ -12,7 +12,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
 # ── Options ──────────────────────────────────────────────────────────────
-option(CROSSOS_BUILD_EXAMPLES "Build example applications" ON)
+option(CROSSOS_BUILD_EXAMPLES "Build applications" ON)
 option(CROSSOS_BUILD_TESTS    "Build the test suite"       ON)
 
 # ── Source files ─────────────────────────────────────────────────────────
@@ -199,9 +199,10 @@ endif()
 
 # ── Sub-directories ───────────────────────────────────────────────────────
 if(CROSSOS_BUILD_EXAMPLES)
-    add_subdirectory(examples/hello_world)
-    add_subdirectory(examples/disc_burner)
-    add_subdirectory(examples/film_scanner)
+    add_subdirectory(applications/hello_world)
+    add_subdirectory(applications/disc_burner)
+    add_subdirectory(applications/film_scanner)
+    add_subdirectory(applications/easy_raw)
 endif()
 
 if(CROSSOS_BUILD_TESTS AND NOT ANDROID)

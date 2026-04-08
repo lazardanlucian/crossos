@@ -106,8 +106,8 @@ run_linux() {
         fi
     done
 
-    # Example app executables are emitted under build/examples/<app>/<app>
-    for bin in "$build_dir"/examples/*/*; do
+    # App executables are emitted under build/applications/<app>/<app>
+    for bin in "$build_dir"/applications/*/*; do
         if [ -f "$bin" ] && [ -x "$bin" ]; then
             run_cmd cp "$bin" "$artifacts_dir/" || return 1
             found=1
@@ -160,8 +160,8 @@ run_windows() {
         fi
     done
 
-    # Example app executables under build-win/examples/<app>/<app>.exe
-    for bin in "$build_dir"/examples/*/*.exe; do
+    # App executables under build-win/applications/<app>/<app>.exe
+    for bin in "$build_dir"/applications/*/*.exe; do
         if [ -f "$bin" ]; then
             run_cmd cp "$bin" "$artifacts_dir/" || return 1
             found=1

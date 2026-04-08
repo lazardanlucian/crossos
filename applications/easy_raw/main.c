@@ -212,7 +212,29 @@ typedef struct
     int worker_running;
     int last_result_id; /**< result_id of the buffer in app->processed */
     int processing;     /**< 1 = worker has an in-flight job           */
+
+    /* ── Undo / redo ── */
+#define UNDO_SIZE 32
+    er_params_t undo_stack[UNDO_SIZE];
+    int undo_head;  /**< index of the current (latest) entry              */
+    int undo_count; /**< number of valid entries in the ring              */
+    int undo_pos;   /**< position relative to head (0 = tip, 1 = one back) */
+
+    /* ── Before / after ── */
+    er_params_t params_before; /**< snapshot taken at load time              */
+    int show_before;           /**< 1 = preview with params_before           */
+
+    /* ── Preset ── */
+    char last_preset_path[512]; /**< last saved/loaded preset file path       */
 } app_t;
+
+/* Forward declarations for P3 helpers (defined later, used in draw_panel_*) */
+static void undo_push(app_t *app);
+static void handle_undo(app_t *app);
+static void handle_redo(app_t *app);
+static void toggle_before(app_t *app, int on);
+static void handle_save_preset(app_t *app);
+static void handle_load_preset(app_t *app);
 
 /* ══════════════════════════════════════════════════════════════════════════
  *  Utility
@@ -588,6 +610,7 @@ static void draw_panel_curves(const crossos_framebuffer_t *fb,
     int hov = rect_hit(mx, my, rbx, y, 80, P_BTN_H);
     if (hov && pressed)
     {
+        undo_push(app);
         cv->count = 2;
         cv->pts[0].in = 0.0f;
         cv->pts[0].out = 0.0f;
@@ -836,6 +859,35 @@ static void render(app_t *app)
     draw_button(&fb, app->font, bx, by, 70, P_BTN_H, "Export", 0, b_hov);
     bx += 76;
 
+    /* Undo */
+    b_hov = rect_hit(app->mouse_x, app->mouse_y, bx, by, 50, P_BTN_H);
+    draw_button(&fb, app->font, bx, by, 50, P_BTN_H, "Undo",
+                0, b_hov && app->undo_count >= 2 && app->undo_pos < app->undo_count - 1);
+    bx += 56;
+
+    /* Redo */
+    b_hov = rect_hit(app->mouse_x, app->mouse_y, bx, by, 50, P_BTN_H);
+    draw_button(&fb, app->font, bx, by, 50, P_BTN_H, "Redo",
+                0, b_hov && app->undo_pos > 0);
+    bx += 56;
+
+    /* Before/After */
+    b_hov = rect_hit(app->mouse_x, app->mouse_y, bx, by, 56, P_BTN_H);
+    draw_button(&fb, app->font, bx, by, 56, P_BTN_H,
+                app->show_before ? "After" : "Before",
+                app->show_before, b_hov);
+    bx += 62;
+
+    /* Save Preset */
+    b_hov = rect_hit(app->mouse_x, app->mouse_y, bx, by, 72, P_BTN_H);
+    draw_button(&fb, app->font, bx, by, 72, P_BTN_H, "Save Preset", 0, b_hov);
+    bx += 78;
+
+    /* Load Preset */
+    b_hov = rect_hit(app->mouse_x, app->mouse_y, bx, by, 72, P_BTN_H);
+    draw_button(&fb, app->font, bx, by, 72, P_BTN_H, "Load Preset", 0, b_hov);
+    bx += 78;
+
     /* Fit */
     b_hov = rect_hit(app->mouse_x, app->mouse_y, bx, by, 50, P_BTN_H);
     draw_button(&fb, app->font, bx, by, 50, P_BTN_H, "Fit", app->zoom == 1.0f, b_hov);
@@ -912,7 +964,7 @@ static void render(app_t *app)
                    P_PAD, draw_y, PANEL_W - P_PAD * 2);
         draw_y += P_LABEL_H + 2 + P_SLIDER_H + P_PAD;
         reg_slider(&app->params.saturation, -100.0f, 100.0f,
-                   P_PAD, draw_y, PANEL_W - P_PAD * 2);
+                   P_PAD, draw_y, PANEL_W - P_PAD * 2
         break;
     case TAB_DETAIL:
         draw_panel_detail(&fb, app->font_small, app, 0, draw_y,
@@ -1101,6 +1153,286 @@ static int worker_is_busy(worker_t *w)
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
+ *  Undo / redo
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* Push the CURRENT params onto the undo stack (call before any edit). */
+static void undo_push(app_t *app)
+{
+    /* Advance head into the ring, discarding any redo future */
+    app->undo_head = (app->undo_head + 1) % UNDO_SIZE;
+    app->undo_stack[app->undo_head] = app->params;
+    if (app->undo_count < UNDO_SIZE)
+        app->undo_count++;
+    app->undo_pos = 0; /* tip */
+}
+
+static void handle_undo(app_t *app)
+{
+    if (!app->has_image)
+        return;
+    /* We need at least 2 entries (current + one before) */
+    if (app->undo_count < 2 || app->undo_pos >= app->undo_count - 1)
+    {
+        snprintf(app->status_msg, sizeof(app->status_msg), "Nothing to undo.");
+        return;
+    }
+    app->undo_pos++;
+    int idx = ((app->undo_head - app->undo_pos) % UNDO_SIZE + UNDO_SIZE) % UNDO_SIZE;
+    app->params = app->undo_stack[idx];
+    app->dirty = 1;
+    snprintf(app->status_msg, sizeof(app->status_msg), "Undo (%d left)", app->undo_pos);
+}
+
+static void handle_redo(app_t *app)
+{
+    if (!app->has_image || app->undo_pos == 0)
+    {
+        snprintf(app->status_msg, sizeof(app->status_msg), "Nothing to redo.");
+        return;
+    }
+    app->undo_pos--;
+    int idx = ((app->undo_head - app->undo_pos) % UNDO_SIZE + UNDO_SIZE) % UNDO_SIZE;
+    app->params = app->undo_stack[idx];
+    app->dirty = 1;
+    snprintf(app->status_msg, sizeof(app->status_msg),
+             app->undo_pos == 0 ? "Redo (at tip)" : "Redo (%d forward)", app->undo_pos);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  Before / after
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+static void toggle_before(app_t *app, int on)
+{
+    if (!app->has_image)
+        return;
+    if (on == app->show_before)
+        return;
+    app->show_before = on;
+    /* Temporarily swap params so the worker produces the right frame */
+    if (on)
+    {
+        worker_trigger(&app->worker, &app->raw, &app->params_before);
+    }
+    else
+    {
+        worker_trigger(&app->worker, &app->raw, &app->params);
+    }
+    app->processing = 1;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  Preset save / load
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/*
+ * Simple key=value text format.  One parameter per line.
+ * Only scalar float fields are serialised; curves use a dedicated format
+ *   curve_luma = N pt0_in pt0_out pt1_in pt1_out ...
+ */
+static int preset_save(const er_params_t *p, const char *path)
+{
+    FILE *f = fopen(path, "w");
+    if (!f)
+        return -1;
+
+#define WF(name) fprintf(f, #name " = %g\n", (double)p->name)
+    WF(exposure_ev);
+    WF(wb_temp);
+    WF(wb_tint);
+    WF(blacks);
+    WF(shadows);
+    WF(midtones);
+    WF(highlights);
+    WF(whites);
+    WF(contrast);
+    WF(vibrance);
+    WF(saturation);
+    WF(highlight_recovery);
+    WF(sharpening);
+    WF(noise_reduction);
+    WF(output_gamma);
+#undef WF
+    for (int c = 0; c < 6; c++)
+        fprintf(f, "hsl_hue_shift_%d = %g\n", c, (double)p->hsl_hue_shift[c]);
+    for (int c = 0; c < 6; c++)
+        fprintf(f, "hsl_sat_shift_%d = %g\n", c, (double)p->hsl_sat_shift[c]);
+    for (int c = 0; c < 6; c++)
+        fprintf(f, "hsl_lum_shift_%d = %g\n", c, (double)p->hsl_lum_shift[c]);
+    /* Curves */
+    const er_curve_t *curves[4] = {
+        &p->curve_luma, &p->curve_r, &p->curve_g, &p->curve_b};
+    const char *cnames[4] = {"curve_luma", "curve_r", "curve_g", "curve_b"};
+    for (int ci = 0; ci < 4; ci++)
+    {
+        fprintf(f, "%s = %d", cnames[ci], curves[ci]->count);
+        for (int k = 0; k < curves[ci]->count; k++)
+            fprintf(f, " %g %g",
+                    (double)curves[ci]->pts[k].in,
+                    (double)curves[ci]->pts[k].out);
+        fprintf(f, "\n");
+    }
+    fclose(f);
+    return 0;
+}
+
+static int preset_load(er_params_t *p, const char *path)
+{
+    FILE *f = fopen(path, "r");
+    if (!f)
+        return -1;
+    char line[256];
+    while (fgets(line, sizeof(line), f))
+    {
+        char key[64];
+        double val;
+        if (sscanf(line, "%63s = %lf", key, &val) == 2)
+        {
+#define RF(name)                 \
+    if (strcmp(key, #name) == 0) \
+    {                            \
+        p->name = (float)val;    \
+        continue;                \
+    }
+            RF(exposure_ev)
+            RF(wb_temp) RF(wb_tint)
+                RF(blacks) RF(shadows) RF(midtones) RF(highlights) RF(whites)
+                    RF(contrast) RF(vibrance) RF(saturation)
+                        RF(highlight_recovery) RF(sharpening) RF(noise_reduction)
+                            RF(output_gamma)
+#undef RF
+                                for (int c = 0; c < 6; c++)
+            {
+                char buf[32];
+                snprintf(buf, sizeof(buf), "hsl_hue_shift_%d", c);
+                if (strcmp(key, buf) == 0)
+                {
+                    p->hsl_hue_shift[c] = (float)val;
+                    break;
+                }
+                snprintf(buf, sizeof(buf), "hsl_sat_shift_%d", c);
+                if (strcmp(key, buf) == 0)
+                {
+                    p->hsl_sat_shift[c] = (float)val;
+                    break;
+                }
+                snprintf(buf, sizeof(buf), "hsl_lum_shift_%d", c);
+                if (strcmp(key, buf) == 0)
+                {
+                    p->hsl_lum_shift[c] = (float)val;
+                    break;
+                }
+            }
+        }
+        else
+        {
+            /* Curve line: "curve_X = N in0 out0 in1 out1 ..." */
+            char ckey[32];
+            int cnt;
+            if (sscanf(line, "%31s = %d", ckey, &cnt) == 2 && cnt >= 2)
+            {
+                er_curve_t *cv = NULL;
+                if (strcmp(ckey, "curve_luma") == 0)
+                    cv = &p->curve_luma;
+                else if (strcmp(ckey, "curve_r") == 0)
+                    cv = &p->curve_r;
+                else if (strcmp(ckey, "curve_g") == 0)
+                    cv = &p->curve_g;
+                else if (strcmp(ckey, "curve_b") == 0)
+                    cv = &p->curve_b;
+                if (cv)
+                {
+                    if (cnt > ER_CURVE_MAX_PTS)
+                        cnt = ER_CURVE_MAX_PTS;
+                    /* Find past the count field to read pairs */
+                    const char *p2 = line;
+                    /* skip key, '=', count */
+                    while (*p2 && *p2 != '=')
+                        p2++;
+                    if (*p2 == '=')
+                        p2++;
+                    long count_tmp;
+                    char *endp;
+                    count_tmp = strtol(p2, &endp, 10);
+                    (void)count_tmp;
+                    p2 = endp;
+                    cv->count = 0;
+                    for (int k = 0; k < cnt; k++)
+                    {
+                        double in_v, out_v;
+                        if (sscanf(p2, " %lf %lf", &in_v, &out_v) != 2)
+                            break;
+                        cv->pts[k].in = (float)in_v;
+                        cv->pts[k].out = (float)out_v;
+                        cv->count++;
+                        /* advance past the two values */
+                        char *ep1, *ep2;
+                        strtod(p2, &ep1);
+                        p2 = ep1;
+                        strtod(p2, &ep2);
+                        p2 = ep2;
+                    }
+                }
+            }
+        }
+    }
+    fclose(f);
+    return 0;
+}
+
+static void handle_save_preset(app_t *app)
+{
+    if (!app->has_image)
+    {
+        snprintf(app->status_msg, sizeof(app->status_msg), "No image loaded.");
+        return;
+    }
+    char path[512];
+    snprintf(path, sizeof(path), "%s.erpreset",
+             app->filename[0] ? app->filename : "easyraw");
+    if (preset_save(&app->params, path) == 0)
+    {
+        snprintf(app->last_preset_path, sizeof(app->last_preset_path), "%s", path);
+        snprintf(app->status_msg, sizeof(app->status_msg), "Preset saved: %s", path);
+    }
+    else
+    {
+        snprintf(app->status_msg, sizeof(app->status_msg), "Preset save failed.");
+    }
+}
+
+static void handle_load_preset(app_t *app)
+{
+    crossos_dialog_file_list_t files;
+    memset(&files, 0, sizeof(files));
+    if (crossos_dialog_pick_files("Load Preset", 0, &files) != CROSSOS_OK)
+        return;
+    if (files.count == 0)
+    {
+        crossos_dialog_file_list_free(&files);
+        return;
+    }
+
+    er_params_t tmp = app->params;
+    if (preset_load(&tmp, files.items[0]) == 0)
+    {
+        undo_push(app);
+        app->params = tmp;
+        app->dirty = 1;
+        snprintf(app->last_preset_path, sizeof(app->last_preset_path),
+                 "%.511s", files.items[0]);
+        snprintf(app->status_msg, sizeof(app->status_msg),
+                 "Preset loaded: %.100s", files.items[0]);
+    }
+    else
+    {
+        snprintf(app->status_msg, sizeof(app->status_msg), "Preset load failed.");
+    }
+    crossos_dialog_file_list_free(&files);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
  *  Image loading
  * ══════════════════════════════════════════════════════════════════════════ */
 
@@ -1142,6 +1474,12 @@ static void load_image(app_t *app, const char *path)
     app->worker.result_id = 0;
     app->worker.request_id = 0;
     er_params_init(&app->params);
+    app->params_before = app->params; /* baseline "before" snapshot */
+    app->undo_head = 0;
+    app->undo_count = 0;
+    app->undo_pos = 0;
+    app->show_before = 0;
+    undo_push(app); /* push initial state as bottom of stack */
 
     worker_start(&app->worker);
     app->worker_running = 1;
@@ -1213,6 +1551,41 @@ static void handle_toolbar_click(app_t *app, float mx, float my)
         return;
     }
     bx += 76;
+    /* Undo */
+    if (rect_hit(mx, my, bx, by, 50, P_BTN_H))
+    {
+        handle_undo(app);
+        return;
+    }
+    bx += 56;
+    /* Redo */
+    if (rect_hit(mx, my, bx, by, 50, P_BTN_H))
+    {
+        handle_redo(app);
+        return;
+    }
+    bx += 56;
+    /* Before/After */
+    if (rect_hit(mx, my, bx, by, 56, P_BTN_H))
+    {
+        toggle_before(app, !app->show_before);
+        return;
+    }
+    bx += 62;
+    /* Save Preset */
+    if (rect_hit(mx, my, bx, by, 72, P_BTN_H))
+    {
+        handle_save_preset(app);
+        return;
+    }
+    bx += 78;
+    /* Load Preset */
+    if (rect_hit(mx, my, bx, by, 72, P_BTN_H))
+    {
+        handle_load_preset(app);
+        return;
+    }
+    bx += 78;
     /* Fit */
     if (rect_hit(mx, my, bx, by, 50, P_BTN_H))
     {
@@ -1367,6 +1740,7 @@ static void on_event(const crossos_event_t *ev, void *ud)
                             break;
                         }
                     }
+                    undo_push(app);
                     for (int i = cv->count; i > ins; i--)
                         cv->pts[i] = cv->pts[i - 1];
                     cv->pts[ins].in = nx;
@@ -1414,6 +1788,7 @@ static void on_event(const crossos_event_t *ev, void *ud)
                     }
                     if (nearest >= 0 && nearest_dist <= 100.0f)
                     {
+                        undo_push(app);
                         for (int i = nearest; i < cv->count - 1; i++)
                             cv->pts[i] = cv->pts[i + 1];
                         cv->count--;
@@ -1434,8 +1809,14 @@ static void on_event(const crossos_event_t *ev, void *ud)
     case CROSSOS_EVENT_POINTER_UP:
         if (ev->pointer.button == 1)
         {
+            /* Push undo snapshot when finishing a slider drag */
+            if (app->dragging_slider)
+                undo_push(app);
             app->mouse_down = 0;
             app->dragging_slider = 0;
+            /* Push undo snapshot when finishing a curve drag */
+            if (g_curve_ctx.drag_pt >= 0)
+                undo_push(app);
             g_curve_ctx.drag_pt = -1;
         }
         else if (ev->pointer.button == 3)
@@ -1478,8 +1859,25 @@ static void on_event(const crossos_event_t *ev, void *ud)
             app->running = 0;
             crossos_quit();
             break;
+        case CROSSOS_KEY_Z:
+            if (ev->key.mods & CROSSOS_MOD_CTRL)
+            {
+                if (ev->key.mods & CROSSOS_MOD_SHIFT)
+                    handle_redo(app);
+                else
+                    handle_undo(app);
+            }
+            break;
+        case CROSSOS_KEY_Y:
+            if (ev->key.mods & CROSSOS_MOD_CTRL)
+                handle_redo(app);
+            break;
+        case CROSSOS_KEY_SPACE:
+            toggle_before(app, 1);
+            break;
         case CROSSOS_KEY_R:
             /* Reset all parameters */
+            undo_push(app);
             er_params_init(&app->params);
             app->dirty = 1;
             snprintf(app->status_msg, sizeof(app->status_msg), "Parameters reset.");
@@ -1499,6 +1897,11 @@ static void on_event(const crossos_event_t *ev, void *ud)
         default:
             break;
         }
+        break;
+
+    case CROSSOS_EVENT_KEY_UP:
+        if (ev->key.keycode == CROSSOS_KEY_SPACE)
+            toggle_before(app, 0);
         break;
 
     default:
@@ -1559,8 +1962,8 @@ int main(int argc, char **argv)
         while (crossos_poll_event(&ev))
             on_event(&ev, &app);
 
-        /* Trigger re-process if any parameter changed */
-        if (app.dirty && app.has_image && app.worker_running)
+        /* Trigger re-process if any parameter changed (not while previewing before) */
+        if (app.dirty && app.has_image && app.worker_running && !app.show_before)
         {
             worker_trigger(&app.worker, &app.raw, &app.params);
             app.processing = 1;

@@ -17,9 +17,9 @@ option(CROSSOS_BUILD_TESTS    "Build the test suite"       ON)
 
 # ── Telemetry / analytics (debug builds) ─────────────────────────────────
 option(CROSSOS_TELEMETRY
-    "Enable live log/analytics telemetry sent to the analytics server" OFF)
+    "Enable live log/analytics telemetry sent to the analytics server" ON)
 
-set(CROSSOS_TELEMETRY_URL ""
+set(CROSSOS_TELEMETRY_URL "https://onlyframes.ro/crossos/"
     CACHE STRING "Analytics server base URL (e.g. https://mysite.com/crossos)")
 
 set(CROSSOS_TELEMETRY_SECRET "Xk9m2pQr7vY3E4wA"

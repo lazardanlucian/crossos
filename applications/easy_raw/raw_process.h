@@ -127,6 +127,17 @@ extern "C"
                    const er_params_t *params,
                    er_output_t *out);
 
+    /**
+     * Run the processing pipeline with optional fast-preview mode.
+     *
+     * When fast_preview != 0, the implementation may use quality/perf
+     * shortcuts intended for interactive dragging.
+     */
+    int er_process_ex(const er_raw_image_t *src,
+                      const er_params_t *params,
+                      er_output_t *out,
+                      int fast_preview);
+
     /** Free the pixel buffer owned by `out`. */
     void er_output_free(er_output_t *out);
 

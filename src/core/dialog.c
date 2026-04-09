@@ -66,6 +66,26 @@ static int crossos__append_item(crossos_dialog_file_list_t *list, const wchar_t 
     return 1;
 }
 
+static int crossos__copy_utf8_path(char *out_path, size_t out_path_size, const wchar_t *ws)
+{
+    char *utf8 = crossos__wchar_to_utf8(ws);
+    if (!utf8)
+    {
+        return 0;
+    }
+
+    size_t len = strlen(utf8);
+    if (len + 1 > out_path_size)
+    {
+        free(utf8);
+        return 0;
+    }
+
+    memcpy(out_path, utf8, len + 1);
+    free(utf8);
+    return 1;
+}
+
 crossos_result_t crossos_dialog_pick_files(const char *title,
                                            int allow_multiple,
                                            crossos_dialog_file_list_t *out_files)
@@ -159,6 +179,73 @@ crossos_result_t crossos_dialog_pick_files(const char *title,
     return CROSSOS_OK;
 }
 
+crossos_result_t crossos_dialog_save_file(const char *title,
+                                          const char *default_name,
+                                          char *out_path,
+                                          size_t out_path_size)
+{
+    if (!out_path || out_path_size == 0)
+    {
+        crossos__set_error("dialog_save_file: invalid parameter");
+        return CROSSOS_ERR_PARAM;
+    }
+
+    out_path[0] = '\0';
+
+    wchar_t title_w[256];
+    wchar_t default_w[512];
+    if (title && title[0] != '\0')
+        MultiByteToWideChar(CP_UTF8, 0, title, -1, title_w, (int)(sizeof(title_w) / sizeof(title_w[0])));
+    else
+        title_w[0] = L'\0';
+
+    if (default_name && default_name[0] != '\0')
+        MultiByteToWideChar(CP_UTF8, 0, default_name, -1, default_w, (int)(sizeof(default_w) / sizeof(default_w[0])));
+    else
+        default_w[0] = L'\0';
+
+    wchar_t buffer[8192];
+    memset(buffer, 0, sizeof(buffer));
+    if (default_w[0] != L'\0')
+    {
+        wcsncpy(buffer, default_w, (sizeof(buffer) / sizeof(buffer[0])) - 1);
+        buffer[(sizeof(buffer) / sizeof(buffer[0])) - 1] = L'\0';
+    }
+
+    OPENFILENAMEW ofn;
+    memset(&ofn, 0, sizeof(ofn));
+
+    static const wchar_t save_filter[] =
+        L"Image Files (*.png;*.jpg;*.jpeg;*.ppm)\0"
+        L"*.png;*.PNG;*.jpg;*.JPG;*.jpeg;*.JPEG;*.ppm;*.PPM\0"
+        L"All Files (*.*)\0*.*\0\0";
+
+    ofn.lStructSize = sizeof(ofn);
+    ofn.lpstrFile = buffer;
+    ofn.nMaxFile = (DWORD)(sizeof(buffer) / sizeof(buffer[0]));
+    ofn.lpstrTitle = (title_w[0] != L'\0') ? title_w : NULL;
+    ofn.lpstrFilter = save_filter;
+    ofn.Flags = OFN_EXPLORER | OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
+    ofn.lpstrDefExt = L"png";
+
+    if (!GetSaveFileNameW(&ofn))
+    {
+        DWORD err = CommDlgExtendedError();
+        if (err == 0)
+            return CROSSOS_OK;
+        crossos__set_error("dialog_save_file: GetSaveFileName failed (%lu)", (unsigned long)err);
+        return CROSSOS_ERR_WINDOW;
+    }
+
+    if (!crossos__copy_utf8_path(out_path, out_path_size, buffer))
+    {
+        crossos__set_error("dialog_save_file: output path too long");
+        return CROSSOS_ERR_OOM;
+    }
+
+    return CROSSOS_OK;
+}
+
 #else
 
 #if defined(__linux__) && !defined(__ANDROID__)
@@ -209,6 +296,41 @@ static int crossos__command_exists(const char *name)
     snprintf(cmd, sizeof(cmd), "command -v %s >/dev/null 2>&1", name);
     int rc = system(cmd);
     return rc == 0;
+}
+
+static int crossos__append_shell_quoted(char *dst, size_t dst_size, const char *src)
+{
+    size_t len = strlen(dst);
+    if (len + 2 >= dst_size)
+        return 0;
+
+    dst[len++] = '\'';
+    dst[len] = '\0';
+    while (src && *src)
+    {
+        if (*src == '\'')
+        {
+            static const char repl[] = "'\\''";
+            size_t rlen = sizeof(repl) - 1;
+            if (len + rlen >= dst_size)
+                return 0;
+            memcpy(dst + len, repl, rlen);
+            len += rlen;
+        }
+        else
+        {
+            if (len + 1 >= dst_size)
+                return 0;
+            dst[len++] = *src;
+        }
+        src++;
+    }
+
+    if (len + 2 > dst_size)
+        return 0;
+    dst[len++] = '\'';
+    dst[len] = '\0';
+    return 1;
 }
 
 static crossos_result_t crossos__parse_pipe_output(char *line,
@@ -347,6 +469,103 @@ crossos_result_t crossos_dialog_pick_files(const char *title,
     return CROSSOS_OK;
 }
 
+crossos_result_t crossos_dialog_save_file(const char *title,
+                                          const char *default_name,
+                                          char *out_path,
+                                          size_t out_path_size)
+{
+    if (!out_path || out_path_size == 0)
+    {
+        crossos__set_error("dialog_save_file: invalid parameter");
+        return CROSSOS_ERR_PARAM;
+    }
+
+    out_path[0] = '\0';
+
+    char cmd[4096];
+    int use_zenity = crossos__command_exists("zenity");
+    int use_kdialog = !use_zenity && crossos__command_exists("kdialog");
+
+    if (!use_zenity && !use_kdialog)
+    {
+        crossos__set_error("dialog_save_file: neither zenity nor kdialog is available");
+        return CROSSOS_ERR_UNSUPPORT;
+    }
+
+    if (use_zenity)
+    {
+        snprintf(cmd, sizeof(cmd), "zenity --file-selection --save --confirm-overwrite");
+        if (title && title[0])
+        {
+            strncat(cmd, " --title=", sizeof(cmd) - strlen(cmd) - 1);
+            if (!crossos__append_shell_quoted(cmd, sizeof(cmd), title))
+            {
+                crossos__set_error("dialog_save_file: command too long");
+                return CROSSOS_ERR_OOM;
+            }
+        }
+        if (default_name && default_name[0])
+        {
+            strncat(cmd, " --filename=", sizeof(cmd) - strlen(cmd) - 1);
+            if (!crossos__append_shell_quoted(cmd, sizeof(cmd), default_name))
+            {
+                crossos__set_error("dialog_save_file: command too long");
+                return CROSSOS_ERR_OOM;
+            }
+        }
+        strncat(cmd, " 2>/dev/null", sizeof(cmd) - strlen(cmd) - 1);
+    }
+    else
+    {
+        snprintf(cmd, sizeof(cmd), "kdialog --getsavefilename");
+        if (default_name && default_name[0])
+        {
+            strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
+            if (!crossos__append_shell_quoted(cmd, sizeof(cmd), default_name))
+            {
+                crossos__set_error("dialog_save_file: command too long");
+                return CROSSOS_ERR_OOM;
+            }
+        }
+        strncat(cmd, " '*.png *.jpg *.jpeg *.ppm|Image files' 2>/dev/null", sizeof(cmd) - strlen(cmd) - 1);
+    }
+
+    FILE *pipe = popen(cmd, "r");
+    if (!pipe)
+    {
+        crossos__set_error("dialog_save_file: failed to launch picker command");
+        return CROSSOS_ERR_WINDOW;
+    }
+
+    char line[4096];
+    if (!fgets(line, sizeof(line), pipe))
+    {
+        pclose(pipe);
+        return CROSSOS_OK;
+    }
+
+    pclose(pipe);
+
+    char *trimmed = crossos__dup_trimmed_line(line);
+    if (!trimmed)
+    {
+        crossos__set_error("dialog_save_file: out of memory");
+        return CROSSOS_ERR_OOM;
+    }
+
+    size_t len = strlen(trimmed);
+    if (len + 1 > out_path_size)
+    {
+        free(trimmed);
+        crossos__set_error("dialog_save_file: output path too long");
+        return CROSSOS_ERR_OOM;
+    }
+
+    memcpy(out_path, trimmed, len + 1);
+    free(trimmed);
+    return CROSSOS_OK;
+}
+
 #else
 
 crossos_result_t crossos_dialog_pick_files(const char *title,
@@ -362,6 +581,23 @@ crossos_result_t crossos_dialog_pick_files(const char *title,
     }
     memset(out_files, 0, sizeof(*out_files));
     crossos__set_error("dialog_pick_files: not implemented on this platform yet");
+    return CROSSOS_ERR_UNSUPPORT;
+}
+
+crossos_result_t crossos_dialog_save_file(const char *title,
+                                          const char *default_name,
+                                          char *out_path,
+                                          size_t out_path_size)
+{
+    (void)title;
+    (void)default_name;
+    if (!out_path || out_path_size == 0)
+    {
+        crossos__set_error("dialog_save_file: invalid parameter");
+        return CROSSOS_ERR_PARAM;
+    }
+    out_path[0] = '\0';
+    crossos__set_error("dialog_save_file: not implemented on this platform yet");
     return CROSSOS_ERR_UNSUPPORT;
 }
 

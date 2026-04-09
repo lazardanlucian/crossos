@@ -34,6 +34,7 @@
  */
 
 #include <crossos/crossos.h>
+#include <crossos/telemetry.h>
 
 #include "raw_decode.h"
 #include "raw_process.h"
@@ -50,6 +51,7 @@
 #include <windows.h>
 #include <pthread.h>
 #else
+#include <sys/utsname.h>
 #include <sys/select.h>
 #include <sys/time.h>
 #include <pthread.h>
@@ -132,6 +134,7 @@ typedef struct
     int shutdown;
     int request_id;            /**< bumped by main for each new job    */
     int result_id;             /**< set by worker when a job completes */
+    int fast_preview;          /**< 1 = interactive fast preview path  */
     er_params_t params;        /**< latest params snapshot             */
     const er_raw_image_t *raw; /**< pointer to raw image (owned by main) */
     er_output_t output;        /**< latest result buffer               */
@@ -213,6 +216,7 @@ typedef struct
     int worker_running;
     int last_result_id; /**< result_id of the buffer in app->processed */
     int processing;     /**< 1 = worker has an in-flight job           */
+    int drag_reprocess_cooldown; /**< frame throttle while dragging controls */
 
     /* ── Undo / redo ── */
 #define UNDO_SIZE 32
@@ -759,10 +763,11 @@ static void update_slider_drag(app_t *app, float mx)
  *  Preview rendering
  * ══════════════════════════════════════════════════════════════════════════ */
 
-static void draw_preview(const crossos_framebuffer_t *fb, app_t *app)
+static void draw_preview(const crossos_framebuffer_t *fb, app_t *app,
+                         int pv_x, int pv_y, int pv_w, int pv_h)
 {
     /* Fill preview area background */
-    crossos_draw_fill_rect(fb, PREVIEW_X, PREVIEW_Y, PREVIEW_W, PREVIEW_H,
+    crossos_draw_fill_rect(fb, pv_x, pv_y, pv_w, pv_h,
                            COL_PREVIEW_BG);
 
     if (!app->has_image || !app->processed.pixels)
@@ -771,8 +776,8 @@ static void draw_preview(const crossos_framebuffer_t *fb, app_t *app)
         const char *hint = "Open a RAW file to begin";
         int tw = crossos_draw_text_width(hint, 1);
         crossos_draw_text(fb,
-                          PREVIEW_X + (PREVIEW_W - tw) / 2,
-                          PREVIEW_Y + PREVIEW_H / 2,
+                          pv_x + (pv_w - tw) / 2,
+                          pv_y + pv_h / 2,
                           hint, COL_TEXT_DIM, 1);
         return;
     }
@@ -781,25 +786,25 @@ static void draw_preview(const crossos_framebuffer_t *fb, app_t *app)
     int iw = img->width, ih = img->height;
 
     /* Fit zoom if pan_x/pan_y haven't been set yet */
-    float fit_scale = (float)PREVIEW_W / (float)iw;
-    if ((float)ih * fit_scale > (float)PREVIEW_H)
-        fit_scale = (float)PREVIEW_H / (float)ih;
+    float fit_scale = (float)pv_w / (float)iw;
+    if ((float)ih * fit_scale > (float)pv_h)
+        fit_scale = (float)pv_h / (float)ih;
     float scale = app->zoom * fit_scale;
 
     int disp_w = (int)((float)iw * scale);
     int disp_h = (int)((float)ih * scale);
 
     /* Centre + apply pan */
-    int origin_x = PREVIEW_X + (PREVIEW_W - disp_w) / 2 + app->pan_x;
-    int origin_y = PREVIEW_Y + (PREVIEW_H - disp_h) / 2 + app->pan_y;
+    int origin_x = pv_x + (pv_w - disp_w) / 2 + app->pan_x;
+    int origin_y = pv_y + (pv_h - disp_h) / 2 + app->pan_y;
 
     /* Clip to preview area and blit with nearest-neighbour scaling — direct fb write */
     int fb_w = fb->width, fb_h = fb->height;
     int is_bgra = (fb->format == CROSSOS_PIXEL_FMT_BGRA8888);
     uint8_t *fb_pix = (uint8_t *)fb->pixels;
     int fb_stride = fb->stride; /* bytes per row */
-    int clip_x0 = PREVIEW_X, clip_y0 = PREVIEW_Y;
-    int clip_x1 = PREVIEW_X + PREVIEW_W, clip_y1 = PREVIEW_Y + PREVIEW_H;
+    int clip_x0 = pv_x, clip_y0 = pv_y;
+    int clip_x1 = pv_x + pv_w, clip_y1 = pv_y + pv_h;
     for (int py = 0; py < disp_h; py++)
     {
         int fy = py + origin_y;
@@ -854,6 +859,12 @@ static void render(app_t *app)
     if (crossos_surface_lock(app->surf, &fb) != CROSSOS_OK)
         return;
 
+    /* Dynamic window dimensions (surface is resized by the platform on WM_SIZE) */
+    int win_w = fb.width;
+    int win_h = fb.height;
+    int pvw = win_w - PANEL_W;          /* preview pane width  */
+    int pvh = win_h - TOPBAR_H - STATUSBAR_H; /* preview pane height */
+
     /* Reset per-frame curve context */
     g_curve_ctx.visible = 0;
 
@@ -861,8 +872,7 @@ static void render(app_t *app)
     crossos_draw_clear(&fb, COL_BG);
 
     /* ── Topbar ── */
-    crossos_draw_fill_rect(&fb, 0, 0, WIN_W, TOPBAR_H, COL_TOPBAR);
-    crossos_draw_line(&fb, 0, TOPBAR_H - 1, WIN_W, TOPBAR_H - 1, COL_BORDER);
+    crossos_draw_fill_rect(&fb, 0, 0, win_w, TOPBAR_H, COL_TOPBAR);
 
     /* App title */
     draw_label(&fb, app->font, P_PAD, (TOPBAR_H - (app->font ? 14 : 7)) / 2,
@@ -928,8 +938,8 @@ static void render(app_t *app)
     draw_label(&fb, app->font, bx + 4, by + 4, zoom_buf, COL_TEXT_DIM);
 
     /* ── Panel background ── */
-    crossos_draw_fill_rect(&fb, 0, TOPBAR_H, PANEL_W, WIN_H - TOPBAR_H, COL_PANEL);
-    crossos_draw_line(&fb, PANEL_W, TOPBAR_H, PANEL_W, WIN_H - STATUSBAR_H, COL_BORDER);
+    crossos_draw_fill_rect(&fb, 0, TOPBAR_H, PANEL_W, win_h - TOPBAR_H, COL_PANEL);
+    crossos_draw_line(&fb, PANEL_W, TOPBAR_H, PANEL_W, win_h - STATUSBAR_H, COL_BORDER);
 
     /* ── Tab bar ── */
     int tab_y = TOPBAR_H + 4;
@@ -943,17 +953,18 @@ static void render(app_t *app)
     }
     int content_y = tab_y + P_BTN_H + P_PAD;
     int draw_y = content_y - app->panel_scroll;
+    int panel_pressed = app->mouse_down && app->mouse_x < PANEL_W;
 
     /* ── Reset sliders registry for this frame ── */
     memset(&g_sliders, 0, sizeof(g_sliders));
 
     /* ── Panel content ── */
-    crossos_draw_push_clip(0, content_y, PANEL_W, WIN_H - STATUSBAR_H - content_y);
+    crossos_draw_push_clip(0, content_y, PANEL_W, win_h - STATUSBAR_H - content_y);
     switch (app->active_tab)
     {
     case TAB_EXPOSURE:
         draw_panel_exposure(&fb, app->font_small, app, 0, draw_y,
-                            PANEL_W, app->mouse_x, app->mouse_y, 0);
+                            PANEL_W, app->mouse_x, app->mouse_y, panel_pressed);
         reg_slider(&app->params.exposure_ev, -5.0f, 5.0f,
                    P_PAD, draw_y, PANEL_W - P_PAD * 2);
         draw_y += P_LABEL_H + 2 + P_SLIDER_H + P_PAD;
@@ -977,7 +988,7 @@ static void render(app_t *app)
         break;
     case TAB_COLOR:
         draw_panel_color(&fb, app->font_small, app, 0, draw_y,
-                         PANEL_W, app->mouse_x, app->mouse_y, 0);
+                         PANEL_W, app->mouse_x, app->mouse_y, panel_pressed);
         reg_slider(&app->params.wb_temp, 2000.0f, 10000.0f,
                    P_PAD, draw_y, PANEL_W - P_PAD * 2);
         draw_y += P_LABEL_H + 2 + P_SLIDER_H + P_PAD;
@@ -992,7 +1003,7 @@ static void render(app_t *app)
         break;
     case TAB_DETAIL:
         draw_panel_detail(&fb, app->font_small, app, 0, draw_y,
-                          PANEL_W, app->mouse_x, app->mouse_y, 0);
+                          PANEL_W, app->mouse_x, app->mouse_y, panel_pressed);
         reg_slider(&app->params.highlight_recovery, 0.0f, 1.0f,
                    P_PAD, draw_y, PANEL_W - P_PAD * 2);
         draw_y += P_LABEL_H + 2 + P_SLIDER_H + P_PAD;
@@ -1004,11 +1015,30 @@ static void render(app_t *app)
         break;
     case TAB_CURVES:
         draw_panel_curves(&fb, app->font_small, app, 0, draw_y,
-                          PANEL_W, app->mouse_x, app->mouse_y, 0);
+                          PANEL_W, app->mouse_x, app->mouse_y, panel_pressed);
         break;
     case TAB_HSL:
         draw_panel_hsl(&fb, app->font_small, app, 0, draw_y,
-                       PANEL_W, app->mouse_x, app->mouse_y, 0);
+                       PANEL_W, app->mouse_x, app->mouse_y, panel_pressed);
+        {
+            /* Mirror the layout used in draw_panel_hsl to register all 18 sliders. */
+            int hsl_y = draw_y;
+            int slw = PANEL_W - P_PAD * 2;
+            for (int c = 0; c < 6; c++)
+            {
+                hsl_y += P_LABEL_H + 4; /* section header */
+                reg_slider(&app->params.hsl_hue_shift[c], -180.0f, 180.0f,
+                           P_PAD, hsl_y, slw);
+                hsl_y += P_LABEL_H + 2 + P_SLIDER_H + P_PAD;
+                reg_slider(&app->params.hsl_sat_shift[c], -100.0f, 100.0f,
+                           P_PAD, hsl_y, slw);
+                hsl_y += P_LABEL_H + 2 + P_SLIDER_H + P_PAD;
+                reg_slider(&app->params.hsl_lum_shift[c], -100.0f, 100.0f,
+                           P_PAD, hsl_y, slw);
+                hsl_y += P_LABEL_H + 2 + P_SLIDER_H + P_PAD;
+                hsl_y += 2 + P_PAD; /* divider line + padding */
+            }
+        }
         break;
     default:
         break;
@@ -1016,19 +1046,19 @@ static void render(app_t *app)
     crossos_draw_pop_clip();
 
     /* ── Preview ── */
-    draw_preview(&fb, app);
+    draw_preview(&fb, app, PANEL_W, TOPBAR_H, pvw, pvh);
 
     /* ── Status bar ── */
-    crossos_draw_fill_rect(&fb, 0, WIN_H - STATUSBAR_H, WIN_W, STATUSBAR_H, COL_STATUS);
-    crossos_draw_line(&fb, 0, WIN_H - STATUSBAR_H, WIN_W, WIN_H - STATUSBAR_H, COL_BORDER);
+    crossos_draw_fill_rect(&fb, 0, win_h - STATUSBAR_H, win_w, STATUSBAR_H, COL_STATUS);
+    crossos_draw_line(&fb, 0, win_h - STATUSBAR_H, win_w, win_h - STATUSBAR_H, COL_BORDER);
     if (app->processing)
     {
-        draw_label_sm(&fb, app->font_small, P_PAD, WIN_H - STATUSBAR_H + 5,
+        draw_label_sm(&fb, app->font_small, P_PAD, win_h - STATUSBAR_H + 5,
                       "Processing...", COL_ACCENT);
     }
     else
     {
-        draw_label_sm(&fb, app->font_small, P_PAD, WIN_H - STATUSBAR_H + 5,
+        draw_label_sm(&fb, app->font_small, P_PAD, win_h - STATUSBAR_H + 5,
                       app->status_msg, COL_TEXT_DIM);
     }
 
@@ -1039,7 +1069,7 @@ static void render(app_t *app)
                  app->filename, app->raw.width, app->raw.height);
         int iw2 = crossos_draw_text_width(info, 1);
         draw_label_sm(&fb, app->font_small,
-                      WIN_W - iw2 - P_PAD, WIN_H - STATUSBAR_H + 5,
+                      win_w - iw2 - P_PAD, win_h - STATUSBAR_H + 5,
                       info, COL_TEXT_DIM);
     }
 
@@ -1074,6 +1104,107 @@ static int export_png(const er_output_t *img, const char *path)
                              img->width, img->height, img->stride);
 }
 
+static void shell_quote_append(char *dst, size_t dst_size, const char *src)
+{
+    size_t len = strlen(dst);
+    if (len + 2 >= dst_size)
+        return;
+    dst[len++] = '\'';
+    dst[len] = '\0';
+    while (src && *src && len + 5 < dst_size)
+    {
+        if (*src == '\'')
+        {
+            memcpy(dst + len, "'\\''", 4);
+            len += 4;
+        }
+        else
+        {
+            dst[len++] = *src;
+        }
+        src++;
+    }
+    if (len + 2 <= dst_size)
+    {
+        dst[len++] = '\'';
+        dst[len] = '\0';
+    }
+}
+
+static int export_jpeg(const er_output_t *img, const char *path)
+{
+    char tmp_path[1024];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.easyraw_tmp.png", path);
+    if (export_png(img, tmp_path) != 0)
+        return -1;
+
+    char cmd[4096];
+    cmd[0] = '\0';
+
+#if defined(_WIN32)
+    snprintf(cmd, sizeof(cmd),
+             "powershell -NoProfile -Command \"");
+    strncat(cmd, "$img=[System.Drawing.Image]::FromFile(", sizeof(cmd) - strlen(cmd) - 1);
+    shell_quote_append(cmd, sizeof(cmd), tmp_path);
+    strncat(cmd, "); try { $img.Save(", sizeof(cmd) - strlen(cmd) - 1);
+    shell_quote_append(cmd, sizeof(cmd), path);
+    strncat(cmd, ",[System.Drawing.Imaging.ImageFormat]::Jpeg) } finally { $img.Dispose() }\"",
+            sizeof(cmd) - strlen(cmd) - 1);
+#else
+    if (system("command -v ffmpeg >/dev/null 2>&1") == 0)
+    {
+        snprintf(cmd, sizeof(cmd), "ffmpeg -y -loglevel error -i ");
+        shell_quote_append(cmd, sizeof(cmd), tmp_path);
+        strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
+        shell_quote_append(cmd, sizeof(cmd), path);
+        strncat(cmd, " >/dev/null 2>&1", sizeof(cmd) - strlen(cmd) - 1);
+    }
+    else if (system("command -v magick >/dev/null 2>&1") == 0)
+    {
+        snprintf(cmd, sizeof(cmd), "magick ");
+        shell_quote_append(cmd, sizeof(cmd), tmp_path);
+        strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
+        shell_quote_append(cmd, sizeof(cmd), path);
+        strncat(cmd, " >/dev/null 2>&1", sizeof(cmd) - strlen(cmd) - 1);
+    }
+    else if (system("command -v convert >/dev/null 2>&1") == 0)
+    {
+        snprintf(cmd, sizeof(cmd), "convert ");
+        shell_quote_append(cmd, sizeof(cmd), tmp_path);
+        strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
+        shell_quote_append(cmd, sizeof(cmd), path);
+        strncat(cmd, " >/dev/null 2>&1", sizeof(cmd) - strlen(cmd) - 1);
+    }
+#endif
+
+    int rc = (cmd[0] != '\0') ? system(cmd) : -1;
+    remove(tmp_path);
+    return rc == 0 ? 0 : -1;
+}
+
+static void build_export_default_name(const app_t *app, char *out, size_t out_size)
+{
+    const char *name = app->filename[0] ? app->filename : "easyraw";
+    const char *dot = strrchr(name, '.');
+    size_t stem_len = dot ? (size_t)(dot - name) : strlen(name);
+    if (stem_len > out_size - 5)
+        stem_len = out_size - 5;
+    memcpy(out, name, stem_len);
+    out[stem_len] = '\0';
+    strncat(out, ".png", out_size - strlen(out) - 1);
+}
+
+static int export_image_for_path(const er_output_t *img, const char *path)
+{
+    if (path_ext_eq(path, "png"))
+        return export_png(img, path);
+    if (path_ext_eq(path, "ppm"))
+        return export_ppm(img, path);
+    if (path_ext_eq(path, "jpg") || path_ext_eq(path, "jpeg"))
+        return export_jpeg(img, path);
+    return -1;
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
  *  Worker thread implementation
  * ══════════════════════════════════════════════════════════════════════════ */
@@ -1101,13 +1232,14 @@ static void *worker_thread_fn(void *arg)
         my_id = w->request_id;
         er_params_t params = w->params;
         const er_raw_image_t *raw = w->raw;
+        int fast_preview = w->fast_preview;
         pthread_mutex_unlock(&w->mu);
 
         if (!raw)
             continue;
 
         er_output_t out = {0};
-        er_process(raw, &params, &out);
+        er_process_ex(raw, &params, &out, fast_preview);
 
         pthread_mutex_lock(&w->mu);
         if (w->request_id == my_id && !w->shutdown)
@@ -1142,12 +1274,14 @@ static void worker_stop(worker_t *w)
 
 static void worker_trigger(worker_t *w,
                            const er_raw_image_t *raw,
-                           const er_params_t *params)
+                           const er_params_t *params,
+                           int fast_preview)
 {
     pthread_mutex_lock(&w->mu);
     w->request_id++;
     w->raw = raw;
     w->params = *params;
+    w->fast_preview = fast_preview;
     pthread_cond_signal(&w->cond);
     pthread_mutex_unlock(&w->mu);
 }
@@ -1237,11 +1371,11 @@ static void toggle_before(app_t *app, int on)
     /* Temporarily swap params so the worker produces the right frame */
     if (on)
     {
-        worker_trigger(&app->worker, &app->raw, &app->params_before);
+        worker_trigger(&app->worker, &app->raw, &app->params_before, 0);
     }
     else
     {
-        worker_trigger(&app->worker, &app->raw, &app->params);
+        worker_trigger(&app->worker, &app->raw, &app->params, 0);
     }
     app->processing = 1;
 }
@@ -1489,6 +1623,7 @@ static void load_image(app_t *app, const char *path)
             snprintf(app->status_msg, sizeof(app->status_msg),
                      "Failed to load: %.120s", path);
         }
+        CROSSOS_LOG_ERRORF("easy_raw", "file_load failed: %.120s", path);
         return;
     }
 
@@ -1516,13 +1651,21 @@ static void load_image(app_t *app, const char *path)
 
     worker_start(&app->worker);
     app->worker_running = 1;
-    worker_trigger(&app->worker, &app->raw, &app->params);
+    worker_trigger(&app->worker, &app->raw, &app->params, 0);
     app->processing = 1;
     app->dirty = 0;
 
     snprintf(app->status_msg, sizeof(app->status_msg),
              "Loaded %.200s  (%d x %d)",
              app->filename, app->raw.width, app->raw.height);
+
+    {
+        const char *dot = strrchr(path, '.');
+        char props[128];
+        snprintf(props, sizeof(props), "{\"ext\":\"%s\",\"w\":%d,\"h\":%d}",
+                 dot ? dot + 1 : "?", app->raw.width, app->raw.height);
+        crossos_telemetry_event("file_open", props);
+    }
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -1553,15 +1696,40 @@ static void handle_export(app_t *app)
                  "Still processing, please wait...");
         return;
     }
-    char out_path[256];
-    snprintf(out_path, sizeof(out_path), "/tmp/easyraw_export.ppm");
+
+    char default_name[256];
+    char out_path[1024];
+    build_export_default_name(app, default_name, sizeof(default_name));
+    if (crossos_dialog_save_file("Export Image", default_name,
+                                 out_path, sizeof(out_path)) != CROSSOS_OK)
+    {
+        if (out_path[0] == '\0')
+            snprintf(app->status_msg, sizeof(app->status_msg), "Export cancelled.");
+        else
+            snprintf(app->status_msg, sizeof(app->status_msg), "Export dialog failed.");
+        return;
+    }
+    if (!strrchr(out_path, '.'))
+        strncat(out_path, ".png", sizeof(out_path) - strlen(out_path) - 1);
+
     snprintf(app->status_msg, sizeof(app->status_msg), "Exporting...");
-    render(app);
-    if (export_ppm(&app->processed, out_path) == 0)
+    if (export_image_for_path(&app->processed, out_path) == 0)
+    {
         snprintf(app->status_msg, sizeof(app->status_msg),
                  "Exported: %s", out_path);
+        char props[128];
+        const char *dot = strrchr(out_path, '.');
+        snprintf(props, sizeof(props), "{\"format\":\"%s\",\"w\":%d,\"h\":%d}",
+                 dot ? dot + 1 : "unknown",
+                 app->processed.width, app->processed.height);
+        crossos_telemetry_event("export", props);
+    }
     else
-        snprintf(app->status_msg, sizeof(app->status_msg), "Export failed.");
+    {
+        snprintf(app->status_msg, sizeof(app->status_msg),
+                 "Export failed for %s.", out_path);
+        CROSSOS_LOG_ERROR("easy_raw", "export failed");
+    }
 }
 
 /* Toolbar button hit testing */
@@ -1664,6 +1832,12 @@ static void on_event(const crossos_event_t *ev, void *ud)
     case CROSSOS_EVENT_WINDOW_CLOSE:
         app->running = 0;
         crossos_quit();
+        break;
+
+    case CROSSOS_EVENT_WINDOW_RESIZE:
+        /* Platform layer already resized the framebuffer; redraw immediately. */
+        if (app->has_image && !app->processing)
+            app->dirty = 1;
         break;
 
     case CROSSOS_EVENT_POINTER_MOVE:
@@ -1792,6 +1966,15 @@ static void on_event(const crossos_event_t *ev, void *ud)
                     update_slider_drag(app, app->mouse_x);
                 }
             }
+            else
+            {
+                /* LMB drag in the preview area → pan the image */
+                app->panning = 1;
+                app->pan_start_x = ev->pointer.x;
+                app->pan_start_y = ev->pointer.y;
+                app->pan_origin_x = app->pan_x;
+                app->pan_origin_y = app->pan_y;
+            }
         }
         else if (ev->pointer.button == 3)
         {
@@ -1842,11 +2025,16 @@ static void on_event(const crossos_event_t *ev, void *ud)
     case CROSSOS_EVENT_POINTER_UP:
         if (ev->pointer.button == 1)
         {
+            int was_dragging_slider = app->dragging_slider;
             /* Push undo snapshot when finishing a slider drag */
             if (app->dragging_slider)
                 undo_push(app);
             app->mouse_down = 0;
             app->dragging_slider = 0;
+            app->panning = 0; /* clear LMB pan */
+            /* Trigger full-quality reprocess (sharpening/NR skipped during fast-preview) */
+            if (was_dragging_slider)
+                app->dirty = 1;
             /* Push undo snapshot when finishing a curve drag */
             if (g_curve_ctx.drag_pt >= 0)
                 undo_push(app);
@@ -1946,12 +2134,34 @@ static void on_event(const crossos_event_t *ev, void *ud)
  *  Entry point
  * ══════════════════════════════════════════════════════════════════════════ */
 
+static void get_device_id(char *buf, size_t len)
+{
+#if defined(_WIN32)
+    DWORD n = (DWORD)len;
+    if (!GetComputerNameA(buf, &n))
+        snprintf(buf, len, "win-unknown");
+#else
+    struct utsname uts;
+    if (uname(&uts) != 0)
+        snprintf(buf, len, "linux-unknown");
+    else
+        snprintf(buf, len, "%s", uts.nodename);
+#endif
+    buf[len - 1] = '\0';
+}
+
 int main(int argc, char **argv)
 {
     app_t app;
     memset(&app, 0, sizeof(app));
 
     crossos_init();
+
+    char device_id[64];
+    get_device_id(device_id, sizeof(device_id));
+    crossos_telemetry_init(NULL, device_id, "0.6.0");
+    CROSSOS_LOG_INFO("easy_raw", "app started");
+    crossos_telemetry_event("app_start", NULL);
 
     app.win = crossos_window_create("EasyRaw", WIN_W, WIN_H,
                                     CROSSOS_WINDOW_RESIZABLE);
@@ -1999,15 +2209,30 @@ int main(int argc, char **argv)
         if (app.dirty && app.has_image && app.worker_running && !app.show_before)
         {
             int interactive_drag = app.dragging_slider || (g_curve_ctx.drag_pt >= 0);
-            if (interactive_drag && worker_is_busy(&app.worker))
+            if (interactive_drag)
             {
-                /* Coalesce drag updates: wait until worker is idle, then process latest state. */
+                if (worker_is_busy(&app.worker))
+                {
+                    /* Coalesce drag updates: wait until worker is idle, then process latest state. */
+                }
+                else
+                {
+                    app.drag_reprocess_cooldown++;
+                    if (app.drag_reprocess_cooldown >= 3)
+                    {
+                        worker_trigger(&app.worker, &app.raw, &app.params, 1);
+                        app.processing = 1;
+                        app.dirty = 0;
+                        app.drag_reprocess_cooldown = 0;
+                    }
+                }
             }
             else
             {
-                worker_trigger(&app.worker, &app.raw, &app.params);
+                worker_trigger(&app.worker, &app.raw, &app.params, 0);
                 app.processing = 1;
                 app.dirty = 0;
+                app.drag_reprocess_cooldown = 0;
             }
         }
 
@@ -2033,6 +2258,8 @@ int main(int argc, char **argv)
     if (app.font_small)
         crossos_typeface_destroy(app.font_small);
     crossos_window_destroy(app.win);
+    crossos_telemetry_event("app_exit", NULL);
+    crossos_telemetry_shutdown();
     crossos_shutdown();
     return 0;
 }

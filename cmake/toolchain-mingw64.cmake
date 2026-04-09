@@ -29,6 +29,14 @@ set(CMAKE_FIND_ROOT_PATH
     /usr/lib/gcc/${TOOLCHAIN_PREFIX}
 )
 
+# Allow callers like build_all.sh to inject an extra sysroot (e.g. deps/mingw64
+# containing cross-compiled static libs such as LibRaw) by setting
+# MINGW_EXTRA_SYSROOT on the cmake command line.
+if(DEFINED MINGW_EXTRA_SYSROOT AND EXISTS "${MINGW_EXTRA_SYSROOT}")
+    list(PREPEND CMAKE_FIND_ROOT_PATH "${MINGW_EXTRA_SYSROOT}")
+    message(STATUS "MinGW extra sysroot: ${MINGW_EXTRA_SYSROOT}")
+endif()
+
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)

@@ -41,7 +41,7 @@ declare(strict_types=1);
 const TELEMETRY_SECRET = 'Xk9m2pQr7vY3E4wA';
 
 /** Secret for MCP access (set a long random string; keep private). */
-const MCP_SECRET = 'change-me-mcp-secret-2026';
+const MCP_SECRET = 'kapsodpioiioj309mansd093n2u4r8v7w6x5y';
 
 /** Database driver: 'sqlite' or 'mysql'. */
 const DB_DRIVER = 'sqlite';

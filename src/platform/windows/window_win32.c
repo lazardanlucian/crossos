@@ -79,7 +79,7 @@ static void utf8_to_wchar(const char *src, wchar_t *dst, int dst_len)
 }
 
 static void push_touch_from_pointer(UINT msg, WPARAM wParam, LPARAM lParam,
-                                    crossos_window_t *win)
+                                    crossos_window_t *win, int button)
 {
     (void)wParam;
     if (!win) {
@@ -101,16 +101,18 @@ static void push_touch_from_pointer(UINT msg, WPARAM wParam, LPARAM lParam,
         pt.y = GET_Y_LPARAM(lParam);
     }
 
-    if (msg == WM_POINTERDOWN || msg == WM_LBUTTONDOWN) {
+    if (msg == WM_POINTERDOWN || msg == WM_LBUTTONDOWN ||
+        msg == WM_RBUTTONDOWN || msg == WM_MBUTTONDOWN) {
         ev.type = CROSSOS_EVENT_POINTER_DOWN;
-    } else if (msg == WM_POINTERUP || msg == WM_LBUTTONUP) {
+    } else if (msg == WM_POINTERUP || msg == WM_LBUTTONUP ||
+               msg == WM_RBUTTONUP || msg == WM_MBUTTONUP) {
         ev.type = CROSSOS_EVENT_POINTER_UP;
     } else {
         ev.type = CROSSOS_EVENT_POINTER_MOVE;
     }
     ev.pointer.x = (float)pt.x;
     ev.pointer.y = (float)pt.y;
-    ev.pointer.button = 1;
+    ev.pointer.button = button;
     crossos__push_event(&ev);
 }
 
@@ -250,13 +252,25 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg,
         return 0;
 
     case WM_LBUTTONDOWN:
-        push_touch_from_pointer(msg, wParam, lParam, win);
+        push_touch_from_pointer(msg, wParam, lParam, win, 1);
         return 0;
     case WM_LBUTTONUP:
-        push_touch_from_pointer(msg, wParam, lParam, win);
+        push_touch_from_pointer(msg, wParam, lParam, win, 1);
+        return 0;
+    case WM_RBUTTONDOWN:
+        push_touch_from_pointer(msg, wParam, lParam, win, 3);
+        return 0;
+    case WM_RBUTTONUP:
+        push_touch_from_pointer(msg, wParam, lParam, win, 3);
+        return 0;
+    case WM_MBUTTONDOWN:
+        push_touch_from_pointer(msg, wParam, lParam, win, 2);
+        return 0;
+    case WM_MBUTTONUP:
+        push_touch_from_pointer(msg, wParam, lParam, win, 2);
         return 0;
     case WM_MOUSEMOVE:
-        push_touch_from_pointer(msg, wParam, lParam, win);
+        push_touch_from_pointer(msg, wParam, lParam, win, 0);
         return 0;
 
     case WM_CHAR: {

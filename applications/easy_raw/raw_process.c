@@ -13,6 +13,14 @@
 #include <string.h>
 #include <math.h>
 
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
+
+#include <pthread.h>
+
 /* ── Defaults ────────────────────────────────────────────────────────── */
 
 void er_params_init(er_params_t *p)
@@ -50,6 +58,146 @@ void er_params_init(er_params_t *p)
                                                           : (v))
 #define MAXF(a, b) ((a) > (b) ? (a) : (b))
 #define MINF(a, b) ((a) < (b) ? (a) : (b))
+
+typedef void (*er_parallel_fn)(int start, int end, void *userdata);
+
+typedef struct
+{
+    er_parallel_fn fn;
+    void *userdata;
+    int start;
+    int end;
+} er_parallel_task_t;
+
+typedef struct
+{
+    float *plane;
+    int w;
+    int h;
+    int r;
+    const float *kernel;
+} blur_ctx_t;
+
+static int er_cpu_count(void)
+{
+#if defined(_WIN32)
+    SYSTEM_INFO info;
+    GetSystemInfo(&info);
+    return info.dwNumberOfProcessors > 0 ? (int)info.dwNumberOfProcessors : 1;
+#else
+    long n = sysconf(_SC_NPROCESSORS_ONLN);
+    return n > 0 ? (int)n : 1;
+#endif
+}
+
+static void *er_parallel_thread(void *arg)
+{
+    er_parallel_task_t *task = (er_parallel_task_t *)arg;
+    task->fn(task->start, task->end, task->userdata);
+    return NULL;
+}
+
+static void er_parallel_for(int total, int min_chunk,
+                            er_parallel_fn fn, void *userdata)
+{
+    if (total <= 0)
+        return;
+
+    int workers = er_cpu_count();
+    if (workers > 8)
+        workers = 8;
+    if (workers < 1)
+        workers = 1;
+    if (min_chunk < 1)
+        min_chunk = 1;
+    if (total / workers < min_chunk)
+        workers = MAXF(1, total / min_chunk);
+    if (workers < 2)
+    {
+        fn(0, total, userdata);
+        return;
+    }
+
+    pthread_t tids[8];
+    er_parallel_task_t tasks[8];
+    int base = total / workers;
+    int rem = total % workers;
+    int start = 0;
+
+    for (int i = 0; i < workers; i++)
+    {
+        int count = base + (i < rem ? 1 : 0);
+        tasks[i].fn = fn;
+        tasks[i].userdata = userdata;
+        tasks[i].start = start;
+        tasks[i].end = start + count;
+        start += count;
+    }
+
+    for (int i = 1; i < workers; i++)
+        pthread_create(&tids[i], NULL, er_parallel_thread, &tasks[i]);
+
+    tasks[0].fn(tasks[0].start, tasks[0].end, tasks[0].userdata);
+
+    for (int i = 1; i < workers; i++)
+        pthread_join(tids[i], NULL);
+}
+
+static void blur_horizontal_pass(int start_y, int end_y, void *userdata)
+{
+    blur_ctx_t *job = (blur_ctx_t *)userdata;
+    float *tmp = (float *)malloc((size_t)job->w * sizeof(float));
+    if (!tmp)
+        return;
+    for (int y = start_y; y < end_y; y++)
+    {
+        float *row = job->plane + y * job->w;
+        memcpy(tmp, row, (size_t)job->w * sizeof(float));
+        for (int x = 0; x < job->w; x++)
+        {
+            float acc = 0.0f;
+            for (int k = -job->r; k <= job->r; k++)
+            {
+                int sx = x + k;
+                if (sx < 0)
+                    sx = 0;
+                if (sx >= job->w)
+                    sx = job->w - 1;
+                acc += tmp[sx] * job->kernel[k + job->r];
+            }
+            row[x] = acc;
+        }
+    }
+    free(tmp);
+}
+
+static void blur_vertical_pass(int start_x, int end_x, void *userdata)
+{
+    blur_ctx_t *job = (blur_ctx_t *)userdata;
+    float *col = (float *)malloc((size_t)job->h * sizeof(float));
+    if (!col)
+        return;
+    for (int x = start_x; x < end_x; x++)
+    {
+        for (int y = 0; y < job->h; y++)
+            col[y] = job->plane[y * job->w + x];
+        for (int y = 0; y < job->h; y++)
+        {
+            float acc = 0.0f;
+            for (int k = -job->r; k <= job->r; k++)
+            {
+                int sy = y + k;
+                if (sy < 0)
+                    sy = 0;
+                if (sy >= job->h)
+                    sy = job->h - 1;
+                acc += col[sy] * job->kernel[k + job->r];
+            }
+            job->plane[y * job->w + x] = acc;
+        }
+    }
+    free(col);
+}
 
 /** sRGB linear → gamma-encoded byte, standard IEC 61966-2-1 curve. */
 static uint8_t linear_to_srgb8(float x)
@@ -215,11 +363,9 @@ static void gaussian_blur_plane(float *plane, int w, int h, float sigma)
 
     int klen = 2 * r + 1;
     float *kernel = (float *)malloc((size_t)klen * sizeof(float));
-    float *tmp = (float *)malloc((size_t)w * sizeof(float));
-    if (!kernel || !tmp)
+    if (!kernel)
     {
         free(kernel);
-        free(tmp);
         return;
     }
 
@@ -234,76 +380,50 @@ static void gaussian_blur_plane(float *plane, int w, int h, float sigma)
     for (int i = 0; i < klen; i++)
         kernel[i] /= sum;
 
-    /* Horizontal pass */
-    for (int y = 0; y < h; y++)
-    {
-        float *row = plane + y * w;
-        memcpy(tmp, row, (size_t)w * sizeof(float));
-        for (int x = 0; x < w; x++)
-        {
-            float acc = 0.0f;
-            for (int k = -r; k <= r; k++)
-            {
-                int sx = x + k;
-                if (sx < 0)
-                    sx = 0;
-                if (sx >= w)
-                    sx = w - 1;
-                acc += tmp[sx] * kernel[k + r];
-            }
-            row[x] = acc;
-        }
-    }
-
-    /* Vertical pass using same kernel (separable) */
-    float *col = (float *)malloc((size_t)h * sizeof(float));
-    if (col)
-    {
-        for (int x = 0; x < w; x++)
-        {
-            for (int y = 0; y < h; y++)
-                col[y] = plane[y * w + x];
-            for (int y = 0; y < h; y++)
-            {
-                float acc = 0.0f;
-                for (int k = -r; k <= r; k++)
-                {
-                    int sy = y + k;
-                    if (sy < 0)
-                        sy = 0;
-                    if (sy >= h)
-                        sy = h - 1;
-                    acc += col[sy] * kernel[k + r];
-                }
-                plane[y * w + x] = acc;
-            }
-        }
-        free(col);
-    }
-
+    blur_ctx_t ctx = {plane, w, h, r, kernel};
+    er_parallel_for(h, 32, blur_horizontal_pass, &ctx);
+    er_parallel_for(w, 32, blur_vertical_pass, &ctx);
     free(kernel);
-    free(tmp);
 }
 
-/* ── Unsharp mask (sharpening) ──────────────────────────────────────── */
-
-static void unsharp_mask_plane(float *plane, int w, int h, float amount)
+/*
+ * Faster sharpening: one luma blur drives edge enhancement for all channels.
+ * This is noticeably cheaper than blurring/sharpening each RGB plane.
+ */
+static void unsharp_mask_luma(float *R, float *G, float *B, int w, int h, float amount)
 {
     if (amount < 0.01f)
         return;
-    float sigma = 1.2f; /* radius */
+
     int n = w * h;
+    float *luma = (float *)malloc((size_t)n * sizeof(float));
+    if (!luma)
+        return;
+
+    for (int i = 0; i < n; i++)
+        luma[i] = 0.2126f * R[i] + 0.7152f * G[i] + 0.0722f * B[i];
+
     float *blurred = (float *)malloc((size_t)n * sizeof(float));
     if (!blurred)
+    {
+        free(luma);
         return;
-    memcpy(blurred, plane, (size_t)n * sizeof(float));
-    gaussian_blur_plane(blurred, w, h, sigma);
+    }
+
+    memcpy(blurred, luma, (size_t)n * sizeof(float));
+    gaussian_blur_plane(blurred, w, h, 1.2f);
+
+    float gain = amount * 2.0f;
     for (int i = 0; i < n; i++)
     {
-        float edge = plane[i] - blurred[i];
-        plane[i] = CLAMPF(plane[i] + amount * edge, 0.0f, 1.0f);
+        float edge = (luma[i] - blurred[i]) * gain;
+        R[i] = CLAMPF(R[i] + edge, 0.0f, 1.0f);
+        G[i] = CLAMPF(G[i] + edge, 0.0f, 1.0f);
+        B[i] = CLAMPF(B[i] + edge, 0.0f, 1.0f);
     }
+
     free(blurred);
+    free(luma);
 }
 
 /* ── Camera colour matrix application ─────────────────────────────────────── */
@@ -415,14 +535,26 @@ static void highlight_recovery(float *R, float *G, float *B, int w, int h,
 
 /* ── Main pipeline ────────────────────────────────────────────────────── */
 
-int er_process(const er_raw_image_t *src,
-               const er_params_t *params,
-               er_output_t *out)
+int er_process_ex(const er_raw_image_t *src,
+                  const er_params_t *params,
+                  er_output_t *out,
+                  int fast_preview)
 {
     if (!src || !params || !out)
         return -1;
     int w = src->width, h = src->height;
-    int n = w * h;
+
+    int scale = 1;
+    if (fast_preview)
+    {
+        if (w * h > 3840 * 2160)
+            scale = 4;
+        else if (w * h > 1280 * 720)
+            scale = 2;
+    }
+    int pw = (w + scale - 1) / scale;
+    int ph = (h + scale - 1) / scale;
+    int n = pw * ph;
 
     /* Allocate or reuse output buffer */
     size_t needed = (size_t)(w * h * 4);
@@ -449,15 +581,41 @@ int er_process(const er_raw_image_t *src,
         return -1;
     }
 
-    memcpy(R, src->planes[0], (size_t)n * sizeof(float));
-    memcpy(G, src->planes[1], (size_t)n * sizeof(float));
-    memcpy(B, src->planes[2], (size_t)n * sizeof(float));
+    if (scale == 1)
+    {
+        memcpy(R, src->planes[0], (size_t)n * sizeof(float));
+        memcpy(G, src->planes[1], (size_t)n * sizeof(float));
+        memcpy(B, src->planes[2], (size_t)n * sizeof(float));
+    }
+    else
+    {
+        for (int y = 0; y < ph; y++)
+        {
+            int sy = y * scale;
+            if (sy >= h)
+                sy = h - 1;
+            for (int x = 0; x < pw; x++)
+            {
+                int sx = x * scale;
+                if (sx >= w)
+                    sx = w - 1;
+                int si = sy * w + sx;
+                int di = y * pw + x;
+                R[di] = src->planes[0][si];
+                G[di] = src->planes[1][si];
+                B[di] = src->planes[2][si];
+            }
+        }
+    }
 
     /* ── 1. Noise reduction (before sharpening) ── */
-    float nr_sigma = params->noise_reduction * 4.0f; /* 0..4 pixel sigma */
-    gaussian_blur_plane(R, w, h, nr_sigma);
-    gaussian_blur_plane(G, w, h, nr_sigma);
-    gaussian_blur_plane(B, w, h, nr_sigma);
+    if (!fast_preview)
+    {
+        float nr_sigma = params->noise_reduction * 4.0f; /* 0..4 pixel sigma */
+        gaussian_blur_plane(R, pw, ph, nr_sigma);
+        gaussian_blur_plane(G, pw, ph, nr_sigma);
+        gaussian_blur_plane(B, pw, ph, nr_sigma);
+    }
 
     /* ── 2. Exposure ── */
     float exp_scale = powf(2.0f, params->exposure_ev);
@@ -479,7 +637,8 @@ int er_process(const er_raw_image_t *src,
     }
 
     /* ── 3b. Highlight recovery (before hard clip) ── */
-    highlight_recovery(R, G, B, w, h, params->highlight_recovery);
+    if (!fast_preview)
+        highlight_recovery(R, G, B, pw, ph, params->highlight_recovery);
 
     /* Hard clamp after recovery */
     for (int i = 0; i < n; i++)
@@ -586,38 +745,56 @@ int er_process(const er_raw_image_t *src,
     }
 
     /* ── 10. Sharpening ── */
-    unsharp_mask_plane(R, w, h, params->sharpening);
-    unsharp_mask_plane(G, w, h, params->sharpening);
-    unsharp_mask_plane(B, w, h, params->sharpening);
+    if (!fast_preview)
+    {
+        unsharp_mask_luma(R, G, B, pw, ph, params->sharpening);
+    }
 
     /* ── 11. Gamma encode & pack RGBA8888 ── */
     float gamma = params->output_gamma;
-    for (int i = 0; i < n; i++)
+    for (int y = 0; y < h; y++)
     {
-        uint8_t r8, g8, b8;
-        if (gamma > 0.01f)
+        int py = y / scale;
+        if (py >= ph)
+            py = ph - 1;
+        for (int x = 0; x < w; x++)
         {
-            r8 = (uint8_t)(powf(CLAMPF(R[i], 0.0f, 1.0f), 1.0f / gamma) * 255.0f + 0.5f);
-            g8 = (uint8_t)(powf(CLAMPF(G[i], 0.0f, 1.0f), 1.0f / gamma) * 255.0f + 0.5f);
-            b8 = (uint8_t)(powf(CLAMPF(B[i], 0.0f, 1.0f), 1.0f / gamma) * 255.0f + 0.5f);
+            int pxs = x / scale;
+            if (pxs >= pw)
+                pxs = pw - 1;
+            int si = py * pw + pxs;
+            uint8_t r8, g8, b8;
+            if (gamma > 0.01f)
+            {
+                r8 = (uint8_t)(powf(CLAMPF(R[si], 0.0f, 1.0f), 1.0f / gamma) * 255.0f + 0.5f);
+                g8 = (uint8_t)(powf(CLAMPF(G[si], 0.0f, 1.0f), 1.0f / gamma) * 255.0f + 0.5f);
+                b8 = (uint8_t)(powf(CLAMPF(B[si], 0.0f, 1.0f), 1.0f / gamma) * 255.0f + 0.5f);
+            }
+            else
+            {
+                r8 = linear_to_srgb8(R[si]);
+                g8 = linear_to_srgb8(G[si]);
+                b8 = linear_to_srgb8(B[si]);
+            }
+            uint8_t *px = out->pixels + ((size_t)y * w + x) * 4;
+            px[0] = r8;
+            px[1] = g8;
+            px[2] = b8;
+            px[3] = 0xFF;
         }
-        else
-        {
-            r8 = linear_to_srgb8(R[i]);
-            g8 = linear_to_srgb8(G[i]);
-            b8 = linear_to_srgb8(B[i]);
-        }
-        uint8_t *px = out->pixels + i * 4;
-        px[0] = r8;
-        px[1] = g8;
-        px[2] = b8;
-        px[3] = 0xFF;
     }
 
     free(R);
     free(G);
     free(B);
     return 0;
+}
+
+int er_process(const er_raw_image_t *src,
+               const er_params_t *params,
+               er_output_t *out)
+{
+    return er_process_ex(src, params, out, 0);
 }
 
 void er_output_free(er_output_t *out)

@@ -31,6 +31,8 @@
 #define ER_POPEN _popen
 #define ER_PCLOSE _pclose
 #else
+extern FILE *popen(const char *command, const char *type);
+extern int pclose(FILE *stream);
 #define ER_POPEN popen
 #define ER_PCLOSE pclose
 #endif
@@ -337,9 +339,7 @@ static int decode_stb_image_file(const char *path, er_raw_image_t *out)
         out->planes[2][i] = (sb <= 0.04045f) ? (sb / 12.92f) : powf((sb + 0.055f) / 1.055f, 2.4f);
     }
 
-    out->cam_matrix[0][0] = 1.0;
-    out->cam_matrix[1][1] = 1.0;
-    out->cam_matrix[2][2] = 1.0;
+    memset(out->cam_matrix, 0, sizeof(out->cam_matrix));
     out->white_level = 1.0;
 
     stbi_image_free(pix);
@@ -624,10 +624,8 @@ static int decode_raw10(FILE *f, er_raw_image_t *out)
                       scale);
     free(bayer);
 
-    /* Identity colour matrix */
-    out->cam_matrix[0][0] = 1.0;
-    out->cam_matrix[1][1] = 1.0;
-    out->cam_matrix[2][2] = 1.0;
+    /* No camera matrix available for this simple raw10 container. */
+    memset(out->cam_matrix, 0, sizeof(out->cam_matrix));
     out->white_level = 1.0;
     return 0;
 }
@@ -737,9 +735,7 @@ static int decode_with_libraw(const char *path, er_raw_image_t *out)
         }
     }
 
-    out->cam_matrix[0][0] = 1.0;
-    out->cam_matrix[1][1] = 1.0;
-    out->cam_matrix[2][2] = 1.0;
+    memset(out->cam_matrix, 0, sizeof(out->cam_matrix));
     out->white_level = 1.0;
 
     libraw_dcraw_clear_mem(img);

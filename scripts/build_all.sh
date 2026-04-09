@@ -85,7 +85,8 @@ run_linux() {
         rm -rf "$build_dir"
     fi
 
-    run_cmd cmake -S "$ROOT_DIR" -B "$build_dir" -DCMAKE_BUILD_TYPE="$BUILD_TYPE" -DCROSSOS_BUILD_TESTS=ON || return 1
+    run_cmd cmake -S "$ROOT_DIR" -B "$build_dir" -DCMAKE_BUILD_TYPE="$BUILD_TYPE" -DCROSSOS_BUILD_TESTS=ON -DEASYRAW_ENABLE_LIBRAW=ON \
+        -DCROSSOS_TELEMETRY=ON -DCROSSOS_TELEMETRY_URL="https://onlyframes.ro/crossos/" || return 1
     run_cmd cmake --build "$build_dir" || return 1
     run_cmd ctest --test-dir "$build_dir" --output-on-failure || return 1
 
@@ -138,7 +139,10 @@ run_windows() {
     run_cmd cmake -S "$ROOT_DIR" -B "$build_dir" \
         -DCMAKE_TOOLCHAIN_FILE="$ROOT_DIR/cmake/toolchain-mingw64.cmake" \
         -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
-        -DCROSSOS_BUILD_TESTS=OFF || return 1
+        -DCROSSOS_BUILD_TESTS=OFF \
+        -DEASYRAW_ENABLE_LIBRAW=ON \
+        -DMINGW_EXTRA_SYSROOT="$ROOT_DIR/deps/mingw64" \
+        -DCROSSOS_TELEMETRY=ON -DCROSSOS_TELEMETRY_URL="https://onlyframes.ro/crossos/" || return 1
 
     local build_code=0
     run_cmd cmake --build "$build_dir" || build_code=$?

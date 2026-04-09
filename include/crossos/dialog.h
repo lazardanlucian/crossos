@@ -22,6 +22,11 @@ crossos_result_t crossos_dialog_pick_files(const char *title,
                                            int allow_multiple,
                                            crossos_dialog_file_list_t *out_files);
 
+crossos_result_t crossos_dialog_save_file(const char *title,
+                                          const char *default_name,
+                                          char *out_path,
+                                          size_t out_path_size);
+
 void crossos_dialog_file_list_free(crossos_dialog_file_list_t *files);
 
 #ifdef __cplusplus

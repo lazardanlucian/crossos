@@ -1,0 +1,11 @@
+{
+    "servers": {
+        "crossos-analytics": {
+            "type": "http",
+            "url": "https://onlyframes.ro/crossos/?mcp=1",
+            "headers": {
+                "Authorization": "Bearer kapsodpioiioj309mansd093n2u4r8v7w6x5y"
+            }
+        }
+    }
+}
